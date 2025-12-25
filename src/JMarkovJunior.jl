@@ -29,6 +29,8 @@ end
 
 
 Bplus.@make_toggleable_asserts markovjunior_
+#DEBUG: Enable debug mode.
+markovjunior_asserts_enabled() = true
 
 "
 A compile-time flag that disables accelerated lookups,
@@ -41,6 +43,9 @@ include("cells.jl")
 include("rules.jl")
 include("inference.jl")
 include("sequences.jl")
+
+include("dsl.jl")
+
 include("renderer.jl")
 
 

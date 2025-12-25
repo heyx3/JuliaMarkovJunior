@@ -123,8 +123,11 @@ end
 const CELL_CODE_BY_CHAR::Dict{Char, UInt8} = Dict(
     t.char => t.code for t in CELL_TYPES
 )
+
 "Represents 'null' or an unset cell"
 const CELL_CODE_INVALID = convert(UInt8, 255)
+"Represents 'wildcard' or 'unchanged'"
+const CELL_CHAR_INVALID = '*'
 
 CellTypeSet(chars::Char...) = CellTypeSet(getindex.(Ref(CELL_CODE_BY_CHAR), chars))
 function CellTypeSet(chars::AbstractVector{Char})

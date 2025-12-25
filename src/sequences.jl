@@ -10,6 +10,14 @@ abstract type AbstractSequence end
 start_sequence(  seq::AbstractSequence, grid::CellGrid, outer_inference::AllInference, prng       )::Any           = error("Unimplemented: ", typeof(seq))
 "Executes the given iteration of the sequence and returns the next iteration (or `nothing` if finished)"
 execute_sequence(seq::AbstractSequence, grid::CellGrid, prng, state)::Optional{Any} = error("Unimplemented: ", typeof(seq))
+"
+Tries to broadcast a sequence to an n-dimensional version of itself.
+Mainly used for dimension-specific sequences to allow 1D versions to apply to any number of dimensions.
+
+Default behavior: returns itself.
+"
+broadcast_sequence(seq::AbstractSequence, new_dims::Int) = seq
+
 
 "Executes a set of rules exactly N times"
 struct Sequence_DoN <: AbstractSequence
@@ -342,6 +350,18 @@ function execute_sequence(d::Sequence_DrawBox{N}, grid::CellGrid{N}, rng::PRNG,
     end
 
     return (b_min, b_max, b_current)
+end
+function broadcast_sequence(seq::Sequence_DrawBox{N}, new_dims::Int) where {N}
+    if N == new_dims
+        return seq
+    elseif N == 1
+        return Sequence_DrawBox(
+            convert(BoxF{new_dims}, seq.area),
+            seq.output_type
+        )
+    else
+        error("Can't broadcast a ", N, "D box to ", new_dims, "D")
+    end
 end
 
 #TODO: Slice a grid to individual M-dimensional areas, and execute a sequence on each such area

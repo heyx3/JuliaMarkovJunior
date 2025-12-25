@@ -24,6 +24,8 @@ struct CellRule
                     c = convert(Char, i)
                     if c in keys(CELL_CODE_BY_CHAR)
                         CELL_CODE_BY_CHAR[convert(Char, i)]
+                    elseif c == CELL_CHAR_INVALID
+                        nothing
                     else
                         @warn "Unsupported rule char '$c', expected one of $(list(keys(CELL_CODE_BY_CHAR)))! Falling back to magenta ('M')"
                         CELL_CODE_BY_CHAR['M']
