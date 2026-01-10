@@ -2,6 +2,8 @@
 module JMarkovJunior
 
 using Random, Setfield, Profile, Printf
+const System = Base.Sys
+
 using OrderedCollections, GLFW, CImGui
 using CSyntax # Simplifies CImGui calls
 using Bplus; @using_bplus
@@ -54,6 +56,11 @@ include("dsl.jl")
 include("renderer.jl")
 include("gui.jl")
 
+const ASSET_BYTES_EDITOR_FONT::Vector{UInt8} = read(joinpath(
+    @__DIR__, "..",
+    "assets", "FiraCode-VariableFont_wght.ttf"
+))
+
 
 "A good sequence for testing and display"
 const DEFAULT_SEQUENCE =
@@ -87,7 +94,7 @@ const DEFAULT_SEQUENCE =
                 @rule "R" => "w"
             end
         end
-    elseif true # Custom weirdness
+    elseif false # Custom weirdness
         @markovjunior 'b' begin
             # White pixel in center, Blue line along top, Brown line along bottom
             @draw_box 'w' min=0.5 size=0
@@ -119,6 +126,68 @@ const DEFAULT_SEQUENCE =
                 @rule "B" => "w"
             end
         end
+    elseif true # Bricks
+        @markovjunior 'b' 2 begin
+            # Mark the min corner.
+            @draw_box 'B' min=0 size=0
+
+            # Pick an "across-brick" axis (ideally Y).
+            @do_n 1 begin
+                @rule Bbb => BYY
+            end
+            # Mark the rows where each brick line starts.
+            @do_all begin
+                @rule YYbbbbbbb => GGGGGGRYY
+                @rule YYbbbbbbbbb => GGGGGGGGRYY
+            end
+            # Finish off the last brick row.
+            @do_all begin
+                @sequential
+                @rule YYb => GYY
+                @rule YY => GG
+                @rule B => R # Make the min-corner marker look like any other row marker
+            end
+
+            # Now fully draw out each row.
+            # Within them, insert column markers to define the bricks underneath it,
+            #    very similarly to how the rows were first defined.
+            @do_all begin
+                @rule Rbb => GYY
+            end
+            @do_all begin
+                @rule YYbbbbbbbbbbb => GGGGGGGGGGRYY
+                @rule YYbbbbbbbbbbbbb => GGGGGGGGGGGGRYY
+                @rule YYbbbbbbbbbbbbbbb => GGGGGGGGGGGGGGRYY
+            end
+            @do_all begin
+                @sequential
+                @rule YYb => GYY
+                @rule YY => GG
+            end
+
+            # Draw the columns within each brick line.
+            @do_all begin
+                @sequential
+                @rule Rbb => GYY
+                @rule YYb => GYY
+                @rule YY => GG
+            end
+
+            # Finalize the colors!
+            @do_all begin
+                # Start with larger lines to speed up the process.
+                @sequential
+                @rule GGGG => wwww
+                @rule GGG => www
+                @rule GG => ww
+                @rule G => w
+
+                @rule bbbb => RRRR
+                @rule bbb => RRR
+                @rule bb => RR
+                @rule b => R
+            end
+        end
     else # Blank screen
         @markovjunior 'b' begin end
     end
@@ -127,12 +196,26 @@ function main(; sequence::ParsedMarkovAlgorithm = DEFAULT_SEQUENCE,
                 seed = @markovjunior_debug(0x1a2a3b4b5c6c7d8d, rand(UInt32))
              )::Int
     @game_loop begin
-        INIT(v2i(800, 800), "Markov Junior Playground",
-             vsync=VsyncModes.on)
+        INIT(
+            v2i(800, 800), "Markov Junior Playground",
+            vsync=VsyncModes.on
+        )
 
         SETUP = begin
             LOOP.max_fps = nothing
-            gui = GuiRunner(dsl_string(sequence), seed)
+
+            gui_editor_font_config = CImGui.ImFontConfig_ImFontConfig()
+            unsafe_store!(gui_editor_font_config.OversampleH, Cint(8))
+            unsafe_store!(gui_editor_font_config.OversampleV, Cint(8))
+            unsafe_store!(gui_editor_font_config.FontDataOwnedByAtlas, false)
+            gui_editor_font = CImGui.AddFontFromMemoryTTF(
+                unsafe_load(CImGui.GetIO().Fonts),
+                ASSET_BYTES_EDITOR_FONT, length(ASSET_BYTES_EDITOR_FONT),
+                19, gui_editor_font_config
+            )
+            CImGui.ImFontConfig_destroy(gui_editor_font_config)
+
+            gui = GuiRunner(dsl_string(sequence), gui_editor_font, seed)
         end
         LOOP = begin
             if GLFW.WindowShouldClose(LOOP.context.window)

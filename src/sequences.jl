@@ -166,7 +166,7 @@ function execute_sequence(d::Sequence_DoN, grid::CellGrid{N}, rng::PRNG,
 
     return (next_i + 1, cache, inference, applications_buffer)
 end
-dsl_string(dn::Sequence_DoN) = string("@do_n ", dn.count, "begin
+dsl_string(dn::Sequence_DoN) = string("@do_n ", dn.count, " begin
     ",
     dn.sequential                  ?                 "@sequential\n    " : "",
     inference_exists(dn.inference) ? "$(dsl_string(dn.inference))\n    " : "",
@@ -328,11 +328,11 @@ function start_sequence(d::Sequence_DrawBox{N}, grid::CellGrid{M},
     resolution = vsize(grid)
     resolutionF = convert(VecF{N}, resolution)
     b_min = convert(v2i, floor(min_inclusive(d.area) * resolutionF))
-    b_max = convert(v2i, floor(max_inclusive(d.area) * resolutionF))
+    b_max = convert(v2i, floor(max_exclusive(d.area) * resolutionF))
 
     (b_min, b_max) = minmax(b_min, b_max)
-    b_min = max(b_min, one(v2i))
-    b_max = min(b_max, resolution)
+    b_min = clamp(b_min, one(v2i), resolution)
+    b_max = clamp(b_max, one(v2i), resolution)
     return (
         b_min, b_max,
         b_min

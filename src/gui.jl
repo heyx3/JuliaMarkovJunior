@@ -38,6 +38,7 @@ mutable struct GuiRunner
     next_seed::GuiText
 
     next_algorithm::GuiText
+    next_algorithm_font::Ptr{CImGui.LibCImGui.ImFont}
     algorithm_error_msg::String
 
     is_playing::Bool
@@ -50,6 +51,7 @@ mutable struct GuiRunner
 end
 
 function GuiRunner(initial_algorithm_str::String,
+                   algorithm_editor_font::Ptr{CImGui.LibCImGui.ImFont},
                    seed="0x1234567890abcdef")
     # Create a half-baked initial instance, then "restart" the algorithm.
     fake_size = 64
@@ -71,6 +73,7 @@ function GuiRunner(initial_algorithm_str::String,
             is_multiline=true,
             imgui_flags=CImGui.LibCImGui.ImGuiInputTextFlags_AllowTabInput
         ),
+        algorithm_editor_font,
         "Uh-OH: UNINITIALIZED!!!!",
 
         false, 5.0f0, -1.0f0,
@@ -183,16 +186,11 @@ function reset_gui_runner_algo(runner::GuiRunner,
     runner.algorithm_rng = PRNG(PrngStrength.strong, runner.current_seed)
 
     # Initialize the algorithm sequence.
-    runner.algorithm_state = execute_sequence(
+    runner.algorithm_state = start_sequence(
         runner.algorithm.main_sequence,
-        runner.state_grid, runner.algorithm_rng,
-        start_sequence(runner.algorithm.main_sequence,
-                       runner.state_grid, AllInference(),
-                       runner.algorithm_rng)
+        runner.state_grid, AllInference(),
+        runner.algorithm_rng
     )
-
-    # Reset other variables.
-    runner.is_playing = false
 
     return nothing
 end
@@ -216,12 +214,12 @@ end
 gui_runner_is_finished(runner::GuiRunner)::Bool = isnothing(runner.algorithm_state)
 
 function gui_main(runner::GuiRunner, delta_seconds::Float32)
-    @markovjunior_debug(print_wnd_sizes::Bool = rand(Float32) < 0.01)
+    print_wnd_sizes::Bool = @markovjunior_debug(rand(Float32) < 0.01, false)
 
     gui_next_window_space(
         Box2Df(
             min=v2f(0, 0),
-            max=v2f(0.5, 1)
+            max=v2f(0.45, 1)
         ),
         min_pixel_size = v2i(323, -1)
     )
@@ -289,26 +287,30 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         CImGui.SameLine(0, 40)
         #    * Play/Pause
         if runner.is_playing
-            runner.time_till_next_tick -= delta_seconds
-            while runner.time_till_next_tick <= 0
-                step_gui_runner_algo(runner)
-                should_update_texture[] = true
-                runner.time_till_next_tick += 1.0f0 / runner.ticks_per_second
+            if gui_runner_is_finished(runner)
+                runner.is_playing = false
+            else
+                runner.time_till_next_tick -= delta_seconds
+                while runner.time_till_next_tick <= 0
+                    step_gui_runner_algo(runner)
+                    should_update_texture[] = true
+                    runner.time_till_next_tick += 1.0f0 / runner.ticks_per_second
+                end
             end
         end
         gui_with_item_width(30) do
             @c CImGui.DragFloat("##TicksPerSecond", &runner.ticks_per_second, 0.1, 0.00001, 0, "%.1f", 1.0)
         end
         CImGui.SameLine()
-        new_is_playing::Bool = false
+        new_is_playing = Ref(runner.is_playing)
         gui_with_item_width(60) do
-            @c CImGui.Selectable(runner.is_playing ? "Pause" : "Play",
-                                 &new_is_playing)
+            CImGui.Selectable(new_is_playing[] ? "Pause" : "Play",
+                              new_is_playing)
         end
-        if new_is_playing && !runner.is_playing
+        if new_is_playing[] && !runner.is_playing
             runner.time_till_next_tick = 1.0f0 / runner.ticks_per_second
         end
-        runner.is_playing = new_is_playing
+        runner.is_playing = new_is_playing[]
 
         CImGui.Dummy(0, 20)
 
@@ -361,7 +363,23 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
                 end
                 Profile.stop_timer()
 
-                #TODO: Pop up a modal view of the profile data
+                prof_text_path = joinpath(@__DIR__, "..", "ProfileResult.txt")
+                open(prof_text_path, "w") do io::IO
+                    ctx = IOContext(io, :displaysize=>(5000, 999999))
+
+                    println(ctx, "========================================\n==    Flat")
+                    Profile.print(ctx, format=:flat)
+
+                    println(ctx, "\n\n\n")
+
+                    println(ctx, "========================================\n==    Tree")
+                    Profile.print(ctx, format=:tree, noisefloor=2.0)
+                end
+                if Sys.iswindows()
+                    run(`cmd /C $(abspath(prof_text_path))`)
+                else
+                    run(`$(abspath(prof_text_path))`)
+                end
             end
             CImGui.SameLine(0, 10)
             CImGui.Text("#TODO: profiled modal view")
@@ -393,7 +411,7 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
 
     gui_next_window_space(
         Box2Df(
-            min=v2f(0.5, 0),
+            min=v2f(0.45, 0),
             max=v2f(0.65, 0.5)
         ),
         max_pixel_size = v2i(-1, 316)
@@ -417,6 +435,16 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         #TODO: Also display a rules legend
     end
 
+    gui_next_window_space(
+        Box2Df(
+            min=v2f(0.45, 0.5),
+            max=v2f(0.65, 1.0)
+        )
+    )
+    gui_window("Files", C_NULL, CImGui.LibCImGui.ImGuiWindowFlags_NoDecoration) do
+        #TODO: File saving/loading
+    end
+
     gui_next_window_space(Box2Df(
         min=v2f(0.65, 0),
         max=v2f(1.0, isempty(runner.algorithm_error_msg) ? 1.0 : 0.8)
@@ -428,10 +456,13 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         runner.next_algorithm.multiline_requested_size = round.(Ref(Int),
             (content_size - v2f(20, 50)).data
         )
-        gui_text!(runner.next_algorithm)
+        gui_with_font(runner.next_algorithm_font) do
+            gui_text!(runner.next_algorithm)
+        end
 
         if CImGui.Button("Restart##WithNewAlgorithm")
             reset_gui_runner_algo(runner, false, true)
+            update_gui_runner_texture_2D(runner)
         end
     end
 
