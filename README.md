@@ -2,7 +2,11 @@
 
 ![A screenshot of the Terrain.jl scene](docs/Screenshot.png)
 
-[![A demo video, sped up 2x](https://youtu.be/mjBu7Omch1s)](https://youtu.be/mjBu7Omch1s)
+[![A demo video, sped up 2x](https://img.youtube.com/vi/mjBu7Omch1s/0.jpg)](https://youtu.be/mjBu7Omch1s)
+
+A YouTube video demo
+
+## Description
 
 A work-in-progress recreation of [this awesome procedural generation algorithm](https://github.com/mxgmn/MarkovJunior/).
 
