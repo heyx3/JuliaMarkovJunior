@@ -141,7 +141,7 @@ function parse_markovjunior(_macro_args::Tuple)::ParsedMarkovAlgorithm
             @bp_check length(a.args) > 0 "A Markov Algorithm must be at least 1D; resolution tuple was empty"
             resolution = eval(a)
             dims = length(resolution)
-            final_dimension = dims
+            final_dimension = resolution
 
             deleteat!(macro_args, i)
             break
