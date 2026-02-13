@@ -1,7 +1,7 @@
 "Based on [https://github.com/mxgmn/MarkovJunior](mxgmn/MarkovJunior)"
 module JMarkovJunior
 
-using Random, Setfield, Profile, Printf, DataStructures
+using Random, Setfield, Profile, Printf, DataStructures, MacroTools
 const System = Base.Sys
 
 using OrderedCollections, GLFW, CImGui
@@ -58,6 +58,11 @@ function dsl_string end
 
 # Basics:
 include("cells.jl")
+
+include("new_runner.jl")
+
+if false
+
 include("rules.jl")
 include("inference.jl")
 include("sequences.jl")
@@ -79,6 +84,8 @@ include("gui.jl")
 
 
 const ASSET_BYTES_EDITOR_FONT::Vector{UInt8} = read(assets_path("FiraCode-VariableFont_wght.ttf"))
+include_dependency(assets_path("FiraCode-VariableFont_wght.ttf"))
+
 const MEMORY_FILE_NAME = "UserSession.json"
 
 
@@ -183,6 +190,8 @@ end
 # @info "Running once for precompilation..."
 #TODO: Pick a comprehensive scene
 run_game(resolution = (25, 25))
+
+end # if false, commenting out the old code
 
 
 end # module
