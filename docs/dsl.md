@@ -130,8 +130,8 @@ We'll go into detail on everything, but here is a quick cheat sheet of **all** t
         B B B ;;;
         b b b
         b b b
-    ] \[ # Now the symmetry modifier: Allow the block to only flip along the Z axis and swap (but not flip) the X/Y axes.
-        (x, y)[ (x, y), (y, x) ],
+    ] \[ # Now the symmetry modifier: Allow the block to only flip along the Z axis and swap the X/Y axes.
+        (x, y)[ (+x, +y), (+y, +x) ],
         # Z is the only choice left for the block's Z,
         #   and not specifing anything means it can flip either way along that Z axis.
     ]
