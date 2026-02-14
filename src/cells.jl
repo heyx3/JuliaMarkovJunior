@@ -166,6 +166,9 @@ dsl_string(cell_code::UInt8) = (cell_code == CELL_CODE_INVALID) ? CELL_CHAR_INVA
 
 "A grid of cell values (by their code)"
 const CellGrid{N} = AbstractArray{UInt8, N}
+"A standard heap-allocated grid of cell values (by their code)"
+const CellGridConcrete{N} = Array{UInt8, N}
+
 "Reference to a N-dimensional grid cell"
 const CellIdx{N} = Vec{N, Int32}
 

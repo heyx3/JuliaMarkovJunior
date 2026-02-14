@@ -18,49 +18,63 @@ markov_allocator_release(::MarkovAllocatorHeap, ::Array) = nothing
 abstract type AbstractMarkovOp end
 abstract type AbstractMarkovBias end
 
-"A Markov algorithm parsed from our DSL (`@markovjunior ...`)"
 struct MarkovAlgorithm
     initial_fill::UInt8
     fixed_dimension::Optional{Int}
-    sequence::Vector{AbstractSequence}
-
-    # Dimension is either undefined, specified vaguely as number of axes,
-    #    or specified precisely as a resolution.
-    dimension::Union{Nothing, Int, Tuple{Vararg{Int}}}
+    sequence::Vector{AbstractMarkovOp}
 end
 
+"Information about the algorithm state as an op is running"
+struct MarkovOpContext
+    inherited_biases_type_stable::Tuple{Vararg{<:AbstractMarkovBias}}
+
+    MarkovOpContext(biases::Tuple = ()) = new(biases)
+    MarkovOpContext(algo_state) = new(  #NOTE: algo state can't be typed because it's defined below
+        markov_algo_flatten_biases(algo_state)
+    )
+end
+
+mutable struct MarkovAlgoState{N}
+    grid::Ref{CellGridConcrete{N}} # Wrapped in a Ref for implementation reasons
+    n_iterations::Int
+
+    op_idx::Int
+    op_state::Any
+    op_context::MarkovOpContext # Inner sequences can modify this field
+
+    # Sequences can push new biases onto this stack, and they all go into any ops inside that stack.
+    bias_chain::Stack{Vector{AbstractMarkovBias}}
+
+    rng::PRNG
+
+    allocator::AbstractMarkovAllocator
+    buffer_iter_count::Ref{Optional{Int}}
+end
 
 
 "Operations can require a minimum number of dimensions for the grid"
 markov_op_min_dimension(::AbstractMarkovOp)::Int = 1
 
+"Collects the current `bias_chain` into a type-stable tuple for ops to process"
+markov_algo_flatten_biases(mas::MarkovAlgoState) = Tuple(Iterators.flatten(mas.bias_chain))
+
+markov_algo_grid(s::MarkovAlgoState) = s.grid
+markov_algo_n_iterations(s::MarkovAlgoState) = s.n_iterations
+
 #############
 
-"Information about the algorithm state as an op is running"
-struct MarkovOpContext
-    rng::PRNG
-
-    inherited_bias::Vector{AbstractMarkovBias}
-    inherited_bias_type_safe::Tuple{Vararg{<:AbstractMarkovBias}}
-
-    allocator::AbstractMarkovAllocator
-
-    MarkovOpContext(rng, inherited_bias, allocator) = new(
-        rng,
-        inherited_bias, Tuple(inherited_bias),
-        allocator
-    )
-end
 "
 Initializing an operation either returns some 'state' object, or `nothing` if the operation can't do anything.
 
 The grid is wrapped in a `Ref` so that it can be reallocated as desired,
   but it will call through to a non-`Ref` version by default.
 "
-markov_op_initialize(op::AbstractMarkovOp, grid::Ref{<:CellGrid}, context::MarkovOpContext)::Optional = markov_op_initialize(op, grid[], context)
+markov_op_initialize(op::AbstractMarkovOp, grid::Ref{<:CellGrid}, rng::PRNG, context::MarkovOpContext)::Optional = markov_op_initialize(op, grid[], rng, context)
 "
 Iterate on an operation N times and return either the new 'state' object, or `nothing` if the operation finished.
-If the iteration count is `nothing` then you should jump straight to the end rather than counting iterations.
+
+The `n_ticks_left` should be modified to remove however many ticks you performed;
+  unless its value is `nothing` in which case you should execute everything ASAP.
 
 The grid is wrapped in a `Ref` so that it can be reallocated as desired,
   but it will call through to a non-`Ref` version by default.
@@ -68,20 +82,23 @@ The grid is wrapped in a `Ref` so that it can be reallocated as desired,
 This defaults to running individual iterations, for ops which don't benefit from batching.
 "
 markov_op_iterate(op::AbstractMarkovOp, state,
-                  grid::Ref{<:CellGrid}, context::MarkovOpContext,
-                  n_ticks::Optional{Int})::Optional = markov_op_iterate(oop, state, grid[], context, n_ticks)
+                  grid::Ref{<:CellGrid}, rng::PRNG,
+                  context::MarkovOpContext,
+                  n_ticks_left::Ref{Optional{Int}}
+                 )::Optional = markov_op_iterate(op, state, grid[], rng, context, n_ticks_left)
 function markov_op_iterate(op::AbstractMarkovOp, state,
-                           grid::CellGrid, context::MarkovOpContext,
-                           n_ticks::Optional{Int})::Optional
-    if isnothing(n_ticks)
+                           grid::CellGrid, rng::PRNG,
+                           context::MarkovOpContext, n_ticks_left::Ref{Optional{Int}}
+                          )::Optional
+    if isnothing(n_ticks_left[])
         while exists(state)
-            state = markov_op_iterate(op, state, grid, context)
+            state = markov_op_iterate(op, state, grid, rng, context)
         end
         return nothing
     else
-        for i in 1:n_ticks
-            isnothing(state) && return nothing
-            state = markov_op_iterate(op, state, grid, context)
+        while n_ticks_left[] > 0 && exists(state)
+            state = markov_op_iterate(op, state, grid, rng, context)
+            n_ticks_left[] -= 1
         end
         return state
     end
@@ -91,10 +108,104 @@ markov_op_iterate(args...) = error("Unhandled: ", typeof.(args))
 #############
 
 "Calculates the desirability of this action, at this moment, in this grid"
-markov_bias_calculate(bias::AbstractMarkovBias, grid::CellGrid{N}, rule::CellRule, at::CellLine{N}) where {N} = error("Unhandled: ", typeof(bias))
+function markov_bias_calculate(bias::AbstractMarkovBias, grid::CellGrid{N},
+                               cell_rule, at::CellLine{N}
+                              )::Float32 where {N}
+    error("Unhandled: ", typeof(bias))
+end
 
 #############
 
+function markov_algo_start(algo::MarkovAlgorithm,
+                           initial_size::Union{Tuple{Vararg{Integer}}, VecT{<:Integer}},
+                           seeds::Union{Real, Tuple{Vararg{Real}}, Vec} = rand(UInt32)
+                           ;
+                           allocator::AbstractMarkovAllocator = MarkovAllocatorHeap()
+                          )::MarkovAlgoState
+    if exists(algo.fixed_dimension) && (length(initial_size) != algo.fixed_dimension)
+        error("Can't start a ", length(initial_size), "D MarkovJunior run with a ",
+              algo.fixed_dimension, "D algorithm")
+    end
+
+    grid = fill(algo.initial_fill, initial_size...)
+    rng = (seeds isa Real) ? PRNG(seeds) : PRNG(seeds...)
+    bias_chain = Stack{Vector{AbstractMarkovBias}}()
+
+    state = MarkovAlgoState(
+        Ref(grid), 0,
+        0, nothing, MarkovOpContext(),
+        bias_chain, rng,
+        allocator, Ref{Optional{Int}}()
+    )
+    markov_algo_step(algo, state)
+    return state
+end
+
+markov_algo_is_finished(algo::MarkovAlgorithm, state::MarkovAlgoState) = (state.op_idx > length(algo.sequence))
+
+function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_iterations::Integer = 1)
+    # Internal behavior: if n_iterations is negative, run all the way to the end.
+    if n_iterations < 0
+        state.buffer_iter_count[] = nothing
+    else
+        state.buffer_iter_count[] = convert(Int, n_iterations)
+    end
+
+    while !markov_algo_is_finished(algo, state) && (isnothing(state.buffer_iter_count[]) || state.buffer_iter_count[] > 0)
+        # Note that when starting the algorithm, op_idx is 0 and op_state is initialized to nothing.
+        if exists(state.op_state)
+            n_iters_before::Int = get_something(state.buffer_iter_count[], 0)
+            state.op_state = markov_op_iterate(algo.sequence[state.op_idx], state.op_state, state.grid,
+                                               state.rng, state.op_context, state.buffer_iter_count)
+            n_iters_after::Int = get_something(state.buffer_iter_count[], 0)
+
+            n_op_ticks::Int = n_iters_before - n_iters_after
+            @markovjunior_assert(n_op_ticks >= 0,
+                                 "Your op ", typeof(algo.sequence[state.op_idx]),
+                                   "*added* ", -n_op_ticks, " to n_ticks_left??")
+            state.n_iterations += n_op_ticks
+        end
+
+        if isnothing(state.op_state)
+            state.op_idx += 1
+            if state.op_idx <= length(algo.sequence)
+                state.op_context = MarkovOpContext(state)
+                state.op_state = markov_op_initialize(algo.sequence[state.op_idx], state.grid,
+                                                      state.rng, state.op_context)
+            end
+        end
+    end
+
+    return nothing
+end
+markov_algo_finish(algo::MarkovAlgorithm, state::MarkovAlgoState) = markov_algo_step(algo, state, -1)
+
+#############
+
+"Test op that does nothing and has a random chance to finish each tick"
+struct MarkovOp_Noop <: AbstractMarkovOp
+    avg_iteration_count::Float32
+end
+markov_op_initialize(noop::MarkovOp_Noop, grid::CellGrid, rng::PRNG, context::MarkovOpContext) = missing
+markov_op_iterate(noop::MarkovOp_Noop, ::Missing, grid::CellGrid, rng::PRNG,  context::MarkovOpContext) = (
+    (rand(rng, Float32) > (1 / noop.avg_iteration_count)) ?
+        missing :
+        nothing
+)
+
+
+#############
+
+export AbstractMarkovAllocator, AbstractMarkovBias, AbstractMarkovOp,
+       MarkovAlgorithm, MarkovAlgoState, MarkovOpContext,
+       markov_allocator_acquire, markov_allocator_release,
+       markov_op_min_dimension, markov_algo_grid, markov_algo_n_iterations,
+       markov_algo_start, markov_algo_step, markov_algo_is_finished
+
+
+#############
+
+if false
 
 dsl_string(pma::ParsedMarkovAlgorithm) = string(
     "@markovjunior '", dsl_string(pma.initial_fill), "' ",
@@ -705,4 +816,5 @@ function parse_markovjunior_block_entry(inputs::BlockParseInputs,
 
     return Sequence_Ordered(sequence, repeats[], get_something(inference[], AllInference()))
 end
-#TODO: :@do_n_relative
+
+end
