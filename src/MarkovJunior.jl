@@ -1,5 +1,5 @@
-"Based on [https://github.com/mxgmn/MarkovJunior](mxgmn/MarkovJunior)"
-module JMarkovJunior
+"A reimplementation of [https://github.com/mxgmn/MarkovJunior](mxgmn/MarkovJunior)"
+module MarkovJunior
 
 using Random, Setfield, Profile, Printf, DataStructures
 const System = Base.Sys
