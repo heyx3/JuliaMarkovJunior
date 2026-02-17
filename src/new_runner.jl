@@ -20,6 +20,31 @@ struct MarkovAllocatorHeap <: AbstractMarkovAllocator end
 
 #############
 
+"Redefine this to return `true` to enable detailed logging"
+log_logic() = false
+
+LOG_LOGIC_TAB::String = ""
+@inline logic_tab_in() = log_logic() && (global LOG_LOGIC_TAB *= "  ")
+@inline logic_tab_out() = log_logic() && (global LOG_LOGIC_TAB = LOG_LOGIC_TAB[2:end])
+
+@inline logic_log(args...) = if log_logic()
+    foreach(args) do arg
+        if arg isa String
+            arg = replace(arg, "\n"=>"\n$LOG_LOGIC_TAB")
+        elseif arg == '\n'
+            arg = "\n$LOG_LOGIC_TAB"
+        else
+            arg = replace(string(arg), "\n"=>"\n$LOG_LOGIC_TAB")
+        end
+        print(stderr, arg)
+    end
+else
+    nothing
+end
+@inline logic_logln(args...) = logic_log(args..., '\n')
+
+#############
+
 abstract type AbstractMarkovOp end
 abstract type AbstractMarkovBias end
 
@@ -90,10 +115,13 @@ Releases all allocations of the MarkovAlgoState back to its allocator;
   remember to call this when you're done with the algorithm state!
 "
 function Base.close(s::MarkovAlgoState, owning_algo::MarkovAlgorithm)
+    logic_logln("Closing algo for ", vsize(s.grid[]))
+    logic_tab_in()
     if !markov_algo_is_finished(owning_algo, s)
         markov_op_cancel(owning_algo.sequence[s.op_idx], s.op_state, s.op_context)
     end
-    markov_allocator_release_array(s.allocator, s.grid)
+    markov_allocator_release_array(s.allocator, s.grid[])
+    logic_tab_out()
     return nothing
 end
 
@@ -104,7 +132,7 @@ markov_op_min_dimension(::AbstractMarkovOp)::Int = 1
 "Collects the current `bias_chain` into a type-stable tuple for ops to process"
 markov_algo_flatten_biases(mas::MarkovAlgoState) = Tuple(Iterators.flatten(mas.bias_chain))
 
-markov_algo_grid(s::MarkovAlgoState) = s.grid
+markov_algo_grid(s::MarkovAlgoState) = s.grid[]
 markov_algo_n_iterations(s::MarkovAlgoState) = s.n_iterations
 
 #############
@@ -136,23 +164,31 @@ function markov_op_iterate(op::AbstractMarkovOp, state,
                            grid::CellGrid, rng::PRNG,
                            context::MarkovOpContext, n_ticks_left::Ref{Optional{Int}}
                           )::Optional
+    logic_logln("Running ", exists(n_ticks_left[]) ? n_ticks_left[] : "infinite",
+                "individual ticks on ", typeof(op), " this iteration...")
+    logic_tab_in()
     if isnothing(n_ticks_left[])
         while exists(state)
             state = markov_op_iterate(op, state, grid, rng, context)
         end
+        logic_tab_out()
         return nothing
     else
         while n_ticks_left[] > 0 && exists(state)
             state = markov_op_iterate(op, state, grid, rng, context)
             n_ticks_left[] -= 1
         end
+        logic_tab_out()
         return state
     end
 end
 markov_op_iterate(args...) = error("Unhandled: ", typeof.(args))
 
 "Called if the algorithm stops running early. This gives you a chance to clean up allocations"
-markov_op_cancel(op::AbstractMarkovOp, state, context::MarkovOpContext) = nothing
+markov_op_cancel(op::AbstractMarkovOp, state, context::MarkovOpContext) = begin
+    logic_logln("Default-Canceling ", typeof(op))
+    nothing
+end
 
 #############
 
@@ -225,7 +261,11 @@ function markov_algo_start(algo::MarkovAlgorithm,
         bias_chain, rng,
         Ref{Optional{Int}}()
     )
+    logic_logln("Stated an algorithm run with seeds ", seeds,
+                "\n Running first step of the algorithm...")
+    logic_tab_in()
     markov_algo_step(algo, state)
+    logic_tab_out()
     return state
 end
 
@@ -239,6 +279,13 @@ function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_itera
         state.buffer_iter_count[] = convert(Int, n_iterations)
     end
 
+    logic_logln("Next tick of the algorithm will run ",
+                  exists(state.buffer_iter_count[]) ?
+                      state.buffer_iter_count[] :
+                      "infinite",
+                  " iterations")
+
+    logic_tab_in()
     while !markov_algo_is_finished(algo, state) && (isnothing(state.buffer_iter_count[]) || state.buffer_iter_count[] > 0)
         # Note that when starting the algorithm, op_idx is 0 and op_state is initialized to nothing.
         if exists(state.op_state)
@@ -252,17 +299,27 @@ function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_itera
                                  "Your op ", typeof(algo.sequence[state.op_idx]),
                                    "*added* ", -n_op_ticks, " to n_ticks_left??")
             state.n_iterations += n_op_ticks
+
+            logic_logln("Completed ", n_op_ticks, " iterations, totaling ", state.n_iterations)
         end
 
         if isnothing(state.op_state)
+            logic_logln("Moving on to the next top-level op!")
             state.op_idx += 1
+            logic_tab_in()
             if state.op_idx <= length(algo.sequence)
                 state.op_context = MarkovOpContext(state)
                 state.op_state = markov_op_initialize(algo.sequence[state.op_idx], state.grid,
                                                       state.rng, state.op_context)
+                logic_logln(typeof(algo.sequence[state.op_idx]))
+                logic_logln("Initial state:\n  ", state.op_state)
+            else
+                logic_logln("No more ops left. This algo run is about to end")
             end
+            logic_tab_out()
         end
     end
+    logic_tab_out()
 
     return nothing
 end
@@ -308,6 +365,11 @@ struct ThresholdInputs
 end
 
 get_threshold(th::Threshold, in::ThresholdInputs)::Int = max(1, round(Int, get_raw_threshold(th, in)))
+get_threshold(th::Threshold, grid::CellGrid, rng::PRNG)::Int = get_threshold(th, ThresholdInputs(
+    convert(Float32, prod(vsize(grid))),
+    convert(Float32, sum(vsize(grid)) / ndims(grid)),
+    rng
+))
 
 get_raw_threshold(th::Int, in::ThresholdInputs) = convert(Float32, th)
 get_raw_threshold(th::ThresholdByArea, in::ThresholdInputs) = convert(Float32, in.area) * th.scale
@@ -324,11 +386,16 @@ end
 const RewriteRuleCell_Set = CellTypeSet
 const RewriteRuleCell_List = UpTo{N_CELL_TYPES, UInt8}
 struct RewriteRuleCell_Wildcard end
+struct RewriteRuleLookup
+    source_idx::Int
+end
 
 "The source entries for a rewrite rule can be a single value, ordered set, or a wildcard"
 const RewriteRuleCellSource = Union{UInt8, RewriteRuleCell_Set, RewriteRuleCell_Wildcard}
 "The destination entries for a rewrite rule can be a single value, unordered set, list (matching source set size), or a wildcard"
-const RewriteRuleCellDest = Union{UInt8, RewriteRuleCell_Set, RewriteRuleCell_List, RewriteRuleCell_Wildcard}
+const RewriteRuleCellDest = Union{UInt8, RewriteRuleCell_Set,
+                                  RewriteRuleCell_List, RewriteRuleCell_Wildcard,
+                                  RewriteRuleLookup}
 
 const RewriteCell = Tuple{RewriteRuleCellSource, RewriteRuleCellDest}
 
@@ -336,8 +403,11 @@ match_rewrite_source(rule::UInt8, value::UInt8) = (rule == value)
 match_rewrite_source(rule::RewriteRuleCell_Set, value::UInt8) = (value in rule)
 match_rewrite_source(::RewriteRuleCell_Wildcard, ::UInt8) = true
 
-pick_rewrite_value(dest::UInt8, src::RewriteRuleCellSource,               src_value::UInt8, rng::PRNG) = dest
-pick_rewrite_value(dest::RewriteRuleCell_Set, src::RewriteRuleCellSource, src_value::UInt8, rng::PRNG) = rand(rng, dest)
+pick_rewrite_value(dest::UInt8,                    src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = dest
+pick_rewrite_value(dest::RewriteRuleCell_Set,      src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = rand(rng, dest)
+pick_rewrite_value(dest::RewriteRuleCell_List,     src::RewriteRuleCell_Set,   src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = dest[cell_set_index_of(src, src_values[self_idx])]
+pick_rewrite_value(dest::RewriteRuleLookup,        src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = src_values[dest.source_idx]
+pick_rewrite_value(dest::RewriteRuleCell_Wildcard, src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = src_values[self_idx]
 
 
 struct RewriteRule{NCells, TCells<:NTuple{NCells, RewriteCell}}
@@ -362,14 +432,15 @@ function rule_matches(r::RewriteRule{NCells, TCells}, grid::CellGrid{NDims},
                       c_start::CellIdx{NDims}, dir::GridDir
                      )::Bool where {NCells, TCells, NDims}
     @markovjunior_assert begin
-        c_end = @set c_start[dir.axis] += (dir.sign * convert(Int32, NCells - 1))
-        c_end in one(VecI{NDims}):vsize(grid)
+        c_end = grid_dir_pos_along(dir, c_start, NCells - 1)
+        grid_range = one(VecI{NDims}):vsize(grid)
+        (c_start in grid_range) && (c_end in grid_range)
     end "Rule is outside grid bounds! $c_start along $dir by $(NCells-1) vs $(vsize(grid))"
 
     return all(ntuple(Val(NCells)) do i
-        c_next = @set c_start[dir.axis] += (dir.sign * convert(Int32, i-1))
+        c_next = grid_dir_pos_along(dir, c_start, i-1)
         return match_rewrite_source(r.cells[i][1], grid[c_next])
-    end...)
+    end)
 end
 
 "
@@ -389,18 +460,38 @@ function visit_rule_match_data(process_candidate::TLambda,
                                inner_subset::Bplus.Math.BoxI{NDims}
                               )::Optional where {NCells, TCells, NDims, TLambda}
     for dir in r.allowed_symmetries
+        clamp_range = (
+            if dir.sign > 0
+                1
+            else
+                NCells
+            end,
+            size(grid, dir.axis) + if dir.sign > 0
+                -(NCells - 1)
+            else
+                0
+            end
+        )
+
         first_pos = min_inclusive(inner_subset)
         if dir.sign > 0
-            @set! first_pos[dir.axis] -= dir.sign * convert(Int32, NCells-1)
+            first_pos = grid_dir_pos_along(dir, first_pos, -(NCells - 1))
         end
+        @set! first_pos[dir.axis] = clamp(first_pos[dir.axis], clamp_range...)
 
         last_pos = max_inclusive(inner_subset)
         if dir.sign < 0
-            @set! last_pos[dir.axis] -= dir.sign * convert(Int32, NCells-1)
+            last_pos = grid_dir_pos_along(dir, last_pos, -(NCells - 1))
         end
+        @set! last_pos[dir.axis] = clamp(last_pos[dir.axis], clamp_range...)
+
+        @markovjunior_assert(
+            (first_pos, last_pos) == minmax(first_pos, last_pos),
+            "Mismatch! $((first_pos, last_pos))"
+        )
 
         for rule_start_pos::CellIdx{NDims} in first_pos:last_pos
-            if grid_mask[rule_start_pos] >= rule_chosen_mask
+            if grid_mask[rule_start_pos] <= rule_chosen_mask
                 user_out = process_candidate(rule_start_pos, dir,
                                              rule_matches(r, grid, rule_start_pos, dir))
                 exists(user_out) && return user_out
@@ -427,20 +518,36 @@ function RewriteCache(grid::CellGrid{NDims}, mask_grid::MaskGrid{NDims},
                       context::MarkovOpContext
                      ) where {NDims, NRules}
     whole_grid_range = Box(min=one(CellIdx{NDims}), max=vsize(grid))
-    
+
+    logic_logln("Caching valid rule applications...")
+    logic_tab_in()
     applications_tuple = map(rules, mask_for_each_rule) do rule, mask
         set = markov_allocator_acquire_ordered_set(context.allocator, Tuple{CellIdx{NDims}, GridDir})
+        empty!(set)
+
+        logic_logln("Masked ", mask, ", rule ", rules)
+        logic_tab_in()
         visit_rule_match_data(rule, grid, mask_grid, mask, whole_grid_range) do cell, dir, is_matching
-            is_matching && push!(set, (cell, dir))
+            if is_matching
+                logic_log("   ", cell, " along ", dir.axis, "|", (dir.sign > 0 ? "+" : ""), dir.sign)
+                push!(set, (cell, dir))
+            end
             return nothing
         end
+        logic_logln()
+        logic_tab_out()
         return set
     end
+    logic_logln("Total candidates: ", sum(map(length, applications_tuple), init=0))
+    logic_tab_out()
+
     applications = markov_allocator_acquire_array(
         context.allocator,
         tuple(length(applications_tuple)),
         OrderedSet{Tuple{CellIdx{NDims}, GridDir}}
     )
+    empty!(applications)
+    append!(applications, applications_tuple)
 
     return RewriteCache{NDims, NRules, typeof(grid), typeof(rules)}(
         grid, rules,
@@ -454,14 +561,15 @@ function update_rewrite_cache!(cache::RewriteCache{NDims, NRules, TGrid, TRules}
                                range_to_invalidate::BoxI{NDims}
                               )::Nothing where {NDims, NRules, TGrid, TRules}
     foreach(cache.rules, cache.rule_masks, cache.applications) do rule, mask, set
-        visit_rule_match_data(cache.grid, cache.mask_grid, mask,
-                              range_to_invalidate) do cell, dir, is_matching
+        visit_rule_match_data(rule, cache.grid, cache.mask_grid, mask, range_to_invalidate
+                             ) do cell, dir, is_matching
             used_to_match = ((cell, dir) in set)
             if is_matching && !used_to_match
                 push!(set, (cell, dir))
             elseif !is_matching && used_to_match
                 delete!(set, (cell, dir))
             end
+            return nothing
         end
     end
 end
@@ -480,14 +588,14 @@ struct MarkovOpRewrite1D{TRules <: Tuple{Vararg{RewriteRule}},
                          TBias <: Tuple{Vararg{AbstractMarkovBias}}
                         } <: AbstractMarkovOp
     rules::TRules
-    threshold::Threshold
+    threshold::Optional{Threshold}
     biases::TBias
 end
 
 mutable struct MarkovOpRewrite1D_State{NDims, NRules, TGrid, TRules<:NTuple{NRules, RewriteRule},
                                        NBiases, TFullBias<:NTuple{NBiases, AbstractMarkovBias},
                                                 TBiasStates<:NTuple{NBiases, Any}}
-    applications_left::Int
+    applications_left::Optional{Int} # Infinite if not given
     rewrite_cache::RewriteCache{NDims, NRules, TGrid, TRules}
     biases::TFullBias
     bias_states::TBiasStates
@@ -500,6 +608,8 @@ function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule}
                               context::MarkovOpContext
                              ) where {NDims, NRules, TBias}
     mask_grid = markov_allocator_acquire_array(context.allocator, size(grid), Float32)
+    rand!(rng, mask_grid)
+
     cache = RewriteCache(grid, mask_grid, r.rules,
                          map(ru -> pick_mask(ru, rng), r.rules),
                          context)
@@ -510,11 +620,7 @@ function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule}
     TBiasStates = Tuple{map(markov_bias_state_type, typeof.(biases))...}
     bias_states::TBiasStates = map(b -> markov_bias_initialize(b, grid, rng, context.bias_context), biases)
 
-    threshold = get_threshold(r.threshold, ThresholdInputs(
-        convert(Float32, prod(vsize(grid))),
-        convert(Float32, sum(vsize(grid)) / ndims(grid)),
-        rng
-    ))
+    threshold = isnothing(r.threshold) ? nothing : get_threshold(r.threshold, grid, rng)
 
     out_state = MarkovOpRewrite1D_State{NDims, NRules, typeof(grid), typeof(r.rules),
                                         length(biases), typeof(biases), TBiasStates}(
@@ -525,10 +631,15 @@ function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule}
         Ref{NTuple{3, Float32}}()
     )
     if all(isempty, cache.applications)
+        logic_logln("MarkovOpRewrite1D has no options at the start; canceling...")
         markov_op_cancel(r, out_state, context)
         return nothing
     else
-        return state
+        logic_logln("MarkovOpRewrite1D has been initialized; there are ",
+                      sum(map(length, cache.applications), init=0), " initial options")
+        logic_logln("The actual threshold is ",
+                      typeof(out_state.applications_left), "(", out_state.applications_left, ")")
+        return out_state
     end
 end
 function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
@@ -538,13 +649,17 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
                            ticks_left::Ref{Optional{Int}}
                           ) where {NDims, NRules, TGrid, TRules,
                                    NBiases, TFullBias, TBiasStates, TSelfBiases}
-    while (state.applications_left > 0) && (isnothing(ticks_left[]) || (ticks_left[] > 0))
+    @markovjunior_assert(get_something(state.applications_left, 1) > 0)
+    logic_logln("Remaining threshold for this rewrite op: ",
+                get_something(state.applications_left, "infinity"))
+
+    while isnothing(ticks_left[]) || (ticks_left[] > 0)
         # Get all the options and their weights.
         empty!(state.weighted_options_buffer)
         state.weight_data_buffer[] = (Inf32, -Inf32, 0.0f0)
         foreach(r.rules, 1:NRules) do rule, rule_i
             for (start_cell, dir) in state.rewrite_cache.applications[rule_i]
-                cell_line = CellLine(start_cell, dir, length(rule.cells))
+                cell_line = CellLine(start_cell, dir, convert(Int32, length(rule.cells)))
                 bias = sum(markov_bias_calculate.(
                     state.biases, state.bias_states,
                     Ref(grid), Ref(cell_line), Ref(rng)
@@ -554,7 +669,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
                     start_cell, dir
                 ))
 
-                state.weight_data_buffer[] = let d = weight_data_buffer[]
+                state.weight_data_buffer[] = let d = state.weight_data_buffer[]
                     (
                         min(d[1], bias),
                         max(d[2], bias),
@@ -563,6 +678,10 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
                 end
             end
         end
+
+        logic_logln("There are ", length(state.weighted_options_buffer),
+                      " options with biases ranging from ",
+                      state.weight_data_buffer[][1], " to ", state.weight_data_buffer[][2])
 
         # If no options are left, we're done.
         if isempty(state.weighted_options_buffer)
@@ -573,6 +692,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
         # Pick an option -- if all weights are equal, then use trivial uniform-random selection.
         (pick_rule_i, pick_start_cell, pick_dir) =
           if state.weight_data_buffer[][1] == state.weight_data_buffer[][2]
+            logic_logln("Luckily we can use uniform-random selection, which is much faster")
             pick_option_i = rand(rng, 1:length(state.weighted_options_buffer))
             choice = state.weighted_options_buffer[pick_option_i]
             (choice[1], choice[3], choice[4])
@@ -582,6 +702,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
             weight_norm_offset = -state.weight_data_buffer[][1]
             weight_norm_scale = 1.0f0 / (state.weight_data_buffer[][3] *
                                         length(state.weighted_options_buffer))
+            logic_logln("Bias weights transform: (+", weight_norm_offset, ")*", weight_norm_scale)
 
             # Pick an option using weighted randomness.
             pick_t = rand(rng, Float32)
@@ -589,7 +710,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
                 picked_f = 0.0f0
                 for (rule_i, raw_bias, start_cell, dir) in state.weighted_options_buffer
                     bias = (raw_bias + weight_norm_offset) * weight_norm_scale
-                    if bias <= picked_f
+                    if picked_f <= pick_t + bias
                         return (rule_i, start_cell, dir)
                     else
                         picked_f += bias
@@ -602,24 +723,41 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
                 end
             end)()
         end
+        logic_logln("Picked rule ", pick_rule_i, " at ", pick_start_cell, " along ", pick_dir)
 
         # Apply the rule.
         # Because each rule is a different type but known at compile-time,
         #    we should add a layer of dispatch when executing it.
-        ((rule::RewriteRule) -> begin
+        #TODO: Include grid dir in the dispatch data; profile
+        rule_len::Int32 = ((rule::RewriteRule) -> begin
+            source_values = Tuple(
+                grid[grid_dir_pos_along(pick_dir, pick_start_cell, i-1)]
+                  for i in 1:length(rule.cells)
+            )
             # Each rule's rewrite cell is also a different type known at compile-time.
             foreach(rule.cells, 1:length(rule.cells)) do (rewrite_source, rewrite_dest), cell_i
-                cell_pos = pick_start_cell
-                @set! cell_pos[pick_dir.axis] += (pick_dir.dir * (cell_i - 1))
-
-                grid[cell_pos] = pick_rewrite_value(rewrite_dest, rewrite_source, grid[cell_pos], rng)
+                cell_pos = grid_dir_pos_along(pick_dir, pick_start_cell, cell_i-1)
+                grid[cell_pos] = pick_rewrite_value(rewrite_dest, rewrite_source,
+                                                    source_values, cell_i,
+                                                    rng)
             end
-        end)(r.rules[rule_i])
+
+            return convert(Int32, length(rule.cells))
+        end)(r.rules[pick_rule_i])
 
         # Update counters.
-        state.applications_left -= 1
+        pick_end_cell = grid_dir_pos_along(pick_dir, pick_start_cell, rule_len-1)
+        (pick_start_cell, pick_end_cell) = minmax(pick_start_cell, pick_end_cell)
+        update_rewrite_cache!(state.rewrite_cache, Box(pick_start_cell:pick_end_cell))
         if exists(ticks_left[])
             ticks_left[] -= 1
+        end
+        if exists(state.applications_left)
+            state.applications_left -= 1
+            if state.applications_left < 1
+                markov_op_cancel(r, state, context)
+                return nothing
+            end
         end
     end
 
@@ -628,10 +766,10 @@ end
 
 function markov_op_cancel(op::MarkovOpRewrite1D, s::MarkovOpRewrite1D_State,
                           context::MarkovOpContext)
-    markov_allocator_release_array(context.allocator, s.cache.mask_grid)
+    markov_allocator_release_array(context.allocator, s.rewrite_cache.mask_grid)
     markov_allocator_release_array(context.allocator, s.weighted_options_buffer)
     foreach((b, s) -> markov_bias_cleanup(b, s), s.biases, s.bias_states)
-    close_rewrite_cache(s.cache, context)
+    close_rewrite_cache(s.rewrite_cache, context)
 end
 
 #############
@@ -664,12 +802,12 @@ function main()
                                 ),
                                 nothing,
                                 1.0f0,
-                                [ GridDir(1, -1), GridDir(1, 1), GridDir(2, -1), GridDir(2, 1) ]
+                                [ GridDir(1, 1) ]
                             )
                         ),
                         1,
                         tuple(
-
+                            
                         )
                     ),
                     # @rewrite wbb => wgw
@@ -686,7 +824,7 @@ function main()
                                 [ GridDir(1, -1), GridDir(1, 1), GridDir(2, -1), GridDir(2, 1) ]
                             )
                         ),
-                        1,
+                        nothing,
                         tuple(
 
                         )
@@ -700,10 +838,10 @@ function main()
                                 ),
                                 nothing,
                                 1.0f0,
-                                [ GridDir(1, -1), GridDir(1, 1), GridDir(2, -1), GridDir(2, 1) ]
+                                [ GridDir(1, 1) ]
                             )
                         ),
-                        1,
+                        ThresholdByArea(0.25f0),
                         tuple(
 
                         )
@@ -713,21 +851,28 @@ function main()
 
                 ]
             )
-            algo_state = markov_algo_start(algo, (25, 25))
+            algo_state = markov_algo_start(algo, (25, 25), 12345)
             algo_grid = markov_algo_grid(algo_state)
 
             tex = Texture(
                 SimpleFormat(FormatTypes.normalized_uint, SimpleFormatComponents.RGB, SimpleFormatBitDepths.B8),
-                convert(v2u, vsize(algo_grid))
+                convert(v2u, vsize(algo_grid)),
+                sampler = TexSampler{2}(
+                    pixel_filter=PixelFilters.rough
+                )
             )
             pixel_buffer = fill(zero(v4f), size(algo_grid))
         end
 
         LOOP = begin
-            GLFW.WindowShouldClose(LOOP.window) && break
+            GLFW.WindowShouldClose(LOOP.context.window) && break
+
+            if !markov_algo_is_finished(algo, algo_state)
+                markov_algo_step(algo, algo_state)
+            end
 
             for p in one(v2i):vsize(algo_grid)
-                algo_grid[p] = vappend(CELL_TYPES[algo_grid[p]].color, @f32(1))
+                pixel_buffer[p] = vappend(CELL_TYPES[algo_grid[p] + 1].color, @f32(1))
             end
             set_tex_color(tex, pixel_buffer)
 
@@ -738,7 +883,7 @@ function main()
 
         TEARDOWN = begin
             close(tex)
-            close(algo_state)
+            close(algo_state, algo)
         end
     end
 end

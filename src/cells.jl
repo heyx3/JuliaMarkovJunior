@@ -56,6 +56,15 @@ Base.hasfastin(::Type{CellTypeSet}) = true
 Base.IteratorSize(::Type{CellTypeSet}) = Base.HasLength()
 Base.length(s::CellTypeSet) = count(i->true, s)
 
+function cell_set_index_of(s::CellTypeSet, value::UInt8)::Optional{Int}
+    for (i, v) in enumerate(s)
+        if v == value
+            return i
+        end
+    end
+    return nothing
+end
+
 Base.empty(::CellTypeSet) = CellTypeSet()
 Base.empty(::Type{CellTypeSet}, ::Type{UInt8}=UInt8) = CellTypeSet()
 
@@ -200,6 +209,12 @@ grid_dir_index(_i) = let i = convert(Int32, _i)
 end
 "Gets the number of grid directions for the given number of dimensions"
 @inline grid_dir_count(N) = N * convert(typeof(N), 2)
+
+function grid_dir_pos_along(dir::GridDir, pos::CellIdx, offset_along_dir::Integer)::typeof(pos)
+    out_pos = pos
+    @set! out_pos[dir.axis] += dir.sign * convert(Int32, offset_along_dir)
+    return out_pos
+end
 
 # Optimize hashing by compressing the GridDir into its index.
 Base.hash(d::GridDir, u::UInt) = Base.hash(grid_dir_index(d), u)
