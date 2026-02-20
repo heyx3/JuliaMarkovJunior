@@ -59,7 +59,8 @@ struct MarkovAlgorithm
     initial_fill::UInt8
 
     fixed_dimension::Optional{Int}
-    min_dimension::Int # Will be 1 if there aren't any restrictions
+    min_dimension::Int # Will be 1 if there aren't any restrictions;
+                       #   will be fixed_dimension if it exists
 
     pragmas::Vector{Pair{Symbol, Vector{Any}}} # Nonstandard commands meant to be parsed by the user of this package
     sequence::Vector{AbstractMarkovOp}

@@ -98,7 +98,9 @@ We'll go into detail on everything, but here is a quick cheat sheet of **all** t
     RGB => UMb  S[+x, Y]
     # You could also write those symmetries using numbers.
     # With letters you only have XYZW, so beyond 4D you need to use these.
-    RGB => YMb  S[+1, 2]
+    # Add 'W...' or '4...' to the end to let it lay along all subsequent dimensions starting at 4D,
+    #    in both directions.
+    RGB => YMb  S[+1, 2, 4...]
 
     # Order of modifiers is important -- write the symmetry *after* the weighting!
     # You can also divide the weight instead of multiply.
@@ -162,6 +164,9 @@ You can also provide a range in parentheses, for example `%(0.5:0.9)
 For example `*2` makes the rule twice as likely to be chosen.
   * `S[ ... ]` lists the axes and directions this strip can run along:
 `S[ x,  -y ]` can run along -X, +X, and -Y.
+Add an ellipsis to allow every symmetry past a certain dimension, e.g. `W...` 
+  allows the rule to face down any axis from W up to infinity.
+
 Each color list is a string of color chars, e.g. `RGB` means "Red then Green then Blue".
 Source and destination strings must describe the same number of pixels,
   so `RGB => wbgY` would throw an error.
@@ -377,9 +382,7 @@ Instead of a flat string of characters like `a[bc]d_e[fgh]`, use Julia's multidi
     #   Fourth axis of the block must stay along the fourth axis of the grid,
     #      but may flip backwards along it.
     # This can be specified with '[ W ]', however it's implicit given the other axes.
-
-    # Note there is an alternative symmetry syntax that better captures certain situations; see below.
-]
+r4]
 ````
 
 > *If you're familiar with Julia, be aware that we flip the first two array axes internally.*

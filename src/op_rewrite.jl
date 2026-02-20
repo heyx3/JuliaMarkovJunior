@@ -4,7 +4,7 @@
 const RewriteRuleCell_Set = CellTypeSet
 const RewriteRuleCell_List = UpTo{N_CELL_TYPES, UInt8}
 struct RewriteRuleCell_Wildcard end
-struct RewriteRuleLookup
+struct RewriteRuleCell_Lookup
     source_idx::Int
 end
 
@@ -13,7 +13,7 @@ const RewriteRuleCellSource = Union{UInt8, RewriteRuleCell_Set, RewriteRuleCell_
 "The destination entries for a rewrite rule can be a single value, unordered set, list (matching source set size), or a wildcard"
 const RewriteRuleCellDest = Union{UInt8, RewriteRuleCell_Set,
                                   RewriteRuleCell_List, RewriteRuleCell_Wildcard,
-                                  RewriteRuleLookup}
+                                  RewriteRuleCell_Lookup}
 
 const RewriteCell = Tuple{RewriteRuleCellSource, RewriteRuleCellDest}
 
@@ -24,7 +24,7 @@ match_rewrite_source(::RewriteRuleCell_Wildcard, ::UInt8) = true
 pick_rewrite_value(dest::UInt8,                    src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = dest
 pick_rewrite_value(dest::RewriteRuleCell_Set,      src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = rand(rng, dest)
 pick_rewrite_value(dest::RewriteRuleCell_List,     src::RewriteRuleCell_Set,   src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = dest[cell_set_index_of(src, src_values[self_idx])]
-pick_rewrite_value(dest::RewriteRuleLookup,        src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = src_values[dest.source_idx]
+pick_rewrite_value(dest::RewriteRuleCell_Lookup,        src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = src_values[dest.source_idx]
 pick_rewrite_value(dest::RewriteRuleCell_Wildcard, src::RewriteRuleCellSource, src_values::Tuple{Vararg{UInt8}}, self_idx::Int, rng::PRNG) = src_values[self_idx]
 
 
@@ -424,9 +424,9 @@ dsl_string_rewrite_dest(rule::UInt8) = dsl_string(rule)
 dsl_string_rewrite_dest(rule::RewriteRuleCell_Set) = "{$(dsl_string(rule))}"
 dsl_string_rewrite_dest(rule::RewriteRuleCell_List) = "[$(string(dsl_string.(rule)...))]"
 dsl_string_rewrite_dest(rule::RewriteRuleCell_Wildcard) = "_"
-dsl_string_rewrite_dest(rule::RewriteRuleLookup) = "[$(rule.source_idx)]"
+dsl_string_rewrite_dest(rule::RewriteRuleCell_Lookup) = "[$(rule.source_idx)]"
 
-dsl_string(strip::RewriteRule_Strip) = string(
+dsl_string(@nospecialize strip::RewriteRule_Strip) = string(
     dsl_string_rewrite_source.(t[1] for t in strip.cells)...,
     " => ",
     dsl_string_rewrite_dest.(t[2] for t in strip.cells)...,
@@ -440,7 +440,108 @@ dsl_string(strip::RewriteRule_Strip) = string(
         error("Unhandled: ", typeof(strip.mask))
     end...,
     (isone(strip.weight) ? () : (" *", strip.weight))...,
-    #TODO: write symmetries, update DSL for '...' at end of symmetry list (multidimensional?)
+    (!isempty(strip.explicit_symmetries) || strip.unlimited_symmetries_after_axis>0) ? "" : string(
+        " S[ ",
+        (
+            string(
+                (dir.sign < 0) ? '-' : '+',
+                (dir.axis < 5) ? ('x', 'y', 'z', 'w')[dir.axis] : dir.axis
+            ) for dir in strip.explicit_symmetries
+        )...,
+        ((strip.unlimited_symmetries_after_axis < 1) ? () : (
+            (isempty(strip.explicit_symmetries) ? () : (", ", ))...,
+            strip.unlimited_symmetries_after_axis, "..."
+        ))...,
+        " ]"
+    )
 )
 
-dsl_string(r::MarkovOpRewrite1D)
+dsl_string(@nospecialize op::MarkovOpRewrite1D) = string(
+    "@rewrite ",
+    exists(op.threshold) ? dsl_string(op.threshold) : "",
+      " ",
+    if length(op.rules) == 1
+        dsl_string(op.rules[1])
+    else
+        string(
+            "begin\n    ",
+            iter_join(dsl_string.(op.rules), "\n    ")...,
+            "\nend"
+        )
+    end,
+      " ",
+    if length(op.biases) == 1
+        dsl_string(op.biases[1])
+    elseif length(op.biases) > 1
+        string(
+            "begin\n    ",
+            iter_join(dsl_string.(op.biases), "\n    ")...,
+            "\nend"
+        )
+    end
+)
+
+function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, expr)
+    push!(inputs.op_stack_trace, "Rewrite rule `$expr`")
+    try
+        if !@capture(expr, a_ => b_)
+            raise_error_at(loc, inputs, "Invalid format; expected `src => dest [modifiers]`")
+        end
+
+        #TODO: Finish.
+    finally
+        pop!(inputs.op_stack_trace)
+    end
+end
+function parse_markovjunior_rewrite_rules_strip(inputs::MacroParserInputs, loc, expr)::Tuple{Vararg{RewriteRule_Strip}}
+    if Base.isexpr(expr, :block)
+        outputs = Vector{RewriteRule_Strip}()
+        parse_markovjunior_block(expr.args) do inner_loc, line
+            push!(outputs, parse_markovjunior_rewrite_rule_strip(inputs, inner_loc, line))
+        end
+        Tuple(outputs)
+    else
+        tuple(parse_markovjunior_rewrite_rule_strip(inputs, loc, expr))
+    end
+end
+function parse_markovjunior_op(::Val{Symbol("@rewrite")},
+                               inputs::MacroParserInputs,
+                               loc::Optional{LineNumberNode},
+                               expr_args)
+    args = Vector{Any}()
+    parse_markovjunior_block(expr_args) do inner_loc, line
+        push!(args, line)
+    end
+
+    if length(args) == 3
+        return MarkovOpRewrite1D(
+            parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2]),
+            parse_markovjunior_threshold(inputs, loc, args[1]),
+            parse_markovjunior_bias_statement(inputs, loc, args[3])
+        )
+    elseif length(args) == 2
+        if check_markovjunior_threshold_appearance(args[1])
+            return MarkovOpRewrite1D(
+                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2]),
+                parse_markovjunior_threshold(inputs, loc, args[1]),
+                ()
+            )
+        else
+            return MarkovOpRewrite1D(
+                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1]),
+                nothing,
+                parse_markovjunior_bias_statement(inputs, loc, args[2])
+            )
+        end
+    elseif length(args) == 1
+        return MarkovOpRewrite1D(
+            parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1]),
+            nothing,
+            ()
+        )
+    elseif length(args) > 3
+        raise_error_at(nothing, inputs, "Should have 3 or fewer sections (threshold>rules>biases); got: ", args)
+    elseif length(args) < 1
+        raise_error_at(nothing, inputs, "Statement is empty; needs to at least have one rewrite rule!")
+    end
+end

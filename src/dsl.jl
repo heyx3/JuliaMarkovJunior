@@ -112,7 +112,7 @@ function parse_markovjunior(_macro_args)::MarkovAlgorithm
     end
 
     # Grab the main sequence.
-    inputs = MacroParserInputs(initial_fill, dims, get_something(dims, 1), Stack{Any}(16))
+    inputs = MacroParserInputs(initial_fill, dims, get_something(dims, 1), Stack{Any}(16), Stack{Vector{AbstractMarkovBias}}(16))
     push!(inputs.op_stack, "Main Sequence")
     main_sequence = Vector{AbstractSequence}()
     pragmas = Vector{Pair{Symbol, Vector{Any}}}()
@@ -138,9 +138,13 @@ function parse_markovjunior(_macro_args)::MarkovAlgorithm
 
     # Finish up.
     @bp_check isempty(macro_args) "Unexpected arguments: $macro_args"
-    if exists(inputs.fixed_dims) && (inputs.fixed_dims < inputs.min_dims)
-        error("The dimensionality is fixed at ", inputs.fixed_dims, "D, ",
-                "but the operations require at least ", inputs.min_dims, "D")
+    if exists(inputs.fixed_dims)
+        if inputs.fixed_dims < inputs.min_dims
+            error("The dimensionality is fixed at ", inputs.fixed_dims, "D, ",
+                    "but the operations require at least ", inputs.min_dims, "D")
+        else
+            inputs.min_dims = inputs.fixed_dims
+        end
     end
     return MarkovAlgorithm(initial_fill, inputs.fixed_dims, inputs.min_dims,
                            pragmas, main_sequence)
@@ -195,15 +199,19 @@ Any other unhandled lines turn into an error.
 "
 function parse_markovjunior_sequence(try_handle_line, inputs::MacroParserInputs, block_args)::Vector{AbstractSequence}
     output = Vector{AbstractSequence}()
+    i = Ref(0)
     parse_markovjunior_block(block_args) do location, line
+        i[] += 1
         if try_handle_line(location, line)
             # Do nothing; the line was handled.
         elseif (line isa Expr) && (line.head == :macrocall)
-            push!(output, parse_markovjunior_block_entry(
-                inputs, Val(line.args[1]::Symbol),
+            push!(inputs.op_stack_trace, "Op $(i[]) `$(line.args[1])`")
+            push!(output, parse_markovjunior_op(
+                Val(line.args[1]::Symbol), inputs,
                 line.args[2]::LineNumberNode,
                 line.args[3:end]
             ))
+            pop!(inputs.op_stack_trace)
         else
             raise_error_at(location, inputs,
                            "Unexpected sequence expression: '", line, "'")
@@ -252,6 +260,69 @@ function parse_markovjunior_bias_statement(inputs::MacroParserInputs, location, 
         for T in unique(typeof, Iterators.flatten(inputs.bias_stack))
             check_markovjunior_biases(T, inputs)
         end
+    end
+end
+
+"
+Checks whether an expression looks to be a Threshold value.
+
+This doesn't guarantee the threshold is well-formed!
+It's meant to disambiguate statements containing optional thresholds and other optional things.
+You need to make sure those other things can't look like thresholds.
+"
+check_markovjunior_threshold_appearance(expr)::Bool = @capture(expr,
+    x_Integer |
+    (length/x_) | (length*x_) | (x_*length) |
+    (area/x_) | (area*x_) | (x_*area) |
+    (a_:b_)
+)
+parse_markovjunior_threshold(inputs::MacroParserInputs, location, threshold_expr)::Threshold = parse_markovjunior_threshold(
+    expr -> nothing,
+    inputs, location, threshold_expr
+)
+function parse_markovjunior_threshold(try_handle,
+                                      inputs::MacroParserInputs, location, threshold_expr)
+    push!(inputs.op_stack_trace, "Threshold statement")
+    try # Ensure stack trace is popped at end
+        user_attempt = try_handle(threshold_expr)
+        if exists(user_attempt)
+            user_attempt
+        elseif threshold_expr isa Integer
+            return convert(Int, threshold_expr)
+        elseif @capture threshold_expr (area/x_Real)
+            return ThresholdByArea(convert(Float32, 1/x))
+        elseif @capture threshold_expr (area*x_Real)|(x_Real*area)
+            return ThresholdByArea(convert(Float32, x))
+        elseif @capture threshold_expr (length/x_Real)
+            return ThresholdByLength(convert(Float32, 1/x))
+        elseif @capture threshold_expr (length*x_Real)|(x_Real*length)
+            return ThresholdByLength(convert(Float32, x))
+        elseif @capture threshold_expr (a_:b_)
+            aa = begin
+                push!(inputs.op_stack_trace, "Range start `$a`")
+                result = parse_markovjunior_threshold(inputs, location, a)
+                if !isa(result, ThresholdScalar)
+                    raise_error_at(location, inputs, "Value not a scalar")
+                end
+                pop!(inputs.op_stack_trace)
+                result
+            end
+            bb = begin
+                push!(inputs.op_stack_trace, "Range end `$b`")
+                result = parse_markovjunior_threshold(inputs, location, b)
+                if !isa(result, ThresholdScalar)
+                    raise_error_at(location, inputs, "Value not a scalar")
+                end
+                pop!(inputs.op_stack_trace)
+                result
+            end
+            return ThresholdRange(aa, bb)
+        else
+            raise_error_at(location, inputs, "Unexpected format for threshold; expected")
+        end
+    # Handle stack trace no matter what.
+    finally
+        pop!(inputs.op_stack_trace)
     end
 end
 
