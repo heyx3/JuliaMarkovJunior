@@ -129,13 +129,6 @@ function Base.iterate(s::CellTypeSet, prev_value::UInt8)
     return nothing
 end
 
-dsl_string(s::CellTypeSet) = let v = Char[ ]
-    for u8 in s
-        push!(v, CELL_TYPES[u8+1].char)
-    end
-    String(v)
-end
-
 
 #####################################
 ##   Cell lookups by type
@@ -165,9 +158,6 @@ function CellTypeSet(chars::String)
     return s
 end
 CellTypeSet(s::Symbol) = CellTypeSet(string(s))
-
-dsl_string(cell_code::Char) = cell_code
-dsl_string(cell_code::UInt8) = (cell_code == CELL_CODE_INVALID) ? CELL_CHAR_INVALID : CELL_TYPES[cell_code+1].char
 
 
 #####################################

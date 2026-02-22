@@ -95,19 +95,19 @@ We'll go into detail on everything, but here is a quick cheat sheet of **all** t
 
     # This rule only matches in the +X and +/-Y directions.
     # It also restricts the algorithm to 2D grids and higher, since it mentions a second axis.
-    RGB => UMb  S[+x, Y]
+    RGB => UMb  ^[+x, Y]
     # You could also write those symmetries using numbers.
     # With letters you only have XYZW, so beyond 4D you need to use these.
     # Add 'W...' or '4...' to the end to let it lay along all subsequent dimensions starting at 4D,
     #    in both directions.
-    RGB => YMb  S[+1, 2, 4...]
+    RGB => YMb  ^[+1, 2, 4...]
 
     # Order of modifiers is important -- write the symmetry *after* the weighting!
     # You can also divide the weight instead of multiply.
-    RGB => YMb  /2  S[+x]
+    RGB => YMb  /2  ^[+x]
 
     # Get ready: here's a wacky rule that uses all the features at once.
-    R_[Bb]w => [2]_[bB]{wbR}  %(0.4:0.6)  *4   S[X]
+    R_[Bb]w => [2]_[bB]{wbR}  %(0.4:0.6)  *4   ^[z...]
 
     # One last thing: multidimensional rewrite rules (with multidimensional symmetries)!
     # They can do everything the above rules can do, but I'm keeping it simple in this example.
@@ -133,7 +133,7 @@ We'll go into detail on everything, but here is a quick cheat sheet of **all** t
         B B B ;;;
         b b b
         b b b
-    ] S[ # Now the symmetry modifier: Allow the block to only flip along the Z axis and swap the X/Y axes.
+    ] ^[ # Now the symmetry modifier: Allow the block to only flip along the Z axis and swap the X/Y axes.
         (x, y)[ (+x, +y), (+y, +x) ]
         # Z is the only choice left for the block's Z,
         #   and not specifing anything means it can flip either way along that Z axis.
@@ -157,13 +157,13 @@ These lists represent a strip of pixels on the grid;
   the algorithm finds instances of `source` and potentially replaces them with `dest`.
 
 The different modifiers are explained in detail below, but here is a quick reference in the same order they must appear in:
-  * `%X` randomly forbids a specific amount of the grid from matching the first pixel of this rule,
+  * The *mask* `%X` randomly forbids a specific amount of the grid from matching the first pixel of this rule,
 for example `%0.75` will randomly pick one fourth of the grid's pixels to not have the rule start there.
 You can also provide a range in parentheses, for example `%(0.5:0.9)
-  * `*X` and `/X` change the chance of this rule being applied, relative to the others.
+  * The *weight* `*X` and `/X` change the chance of this rule being applied, relative to the others.
 For example `*2` makes the rule twice as likely to be chosen.
-  * `S[ ... ]` lists the axes and directions this strip can run along:
-`S[ x,  -y ]` can run along -X, +X, and -Y.
+  * The *symmetry* `^[ ... ]` lists the axes and directions this strip can run along:
+`^[ x,  -y ]` can run along -X, +X, and -Y.
 Add an ellipsis to allow every symmetry past a certain dimension, e.g. `W...` 
   allows the rule to face down any axis from W up to infinity.
 
@@ -225,7 +225,7 @@ However you can provide a *threshold* as the first argument, to limit this.
 
 By default each rule can be applied along any grid axis, and in either direction
   (`+` meaning the first pixel of the rule is at the min end of the strip; `-` meaning it's at the max end).
-To change this, add the following modifier to the end of the rule: `S[ axes... ]`,
+To change this, add the following modifier to the end of the rule: `^[ axes... ]`,
   where the elements of `axes` names each matchable axis (using `x`/`y`/`z`/`w` and `1`/`2`/... interchangeably)
   and optionally a single direction.
 
@@ -233,13 +233,13 @@ For example:
 
 ````julia
 # Single-line example:
-@rewrite RR => Yb  S[-x, Y]  # Only -x, either direction along Y, and nothing beyond that
+@rewrite RR => Yb  ^[-x, Y]  # Only -x, either direction along Y, and nothing beyond that
 
 # Multi-line example:
 @rewrite begin
     R => Y  # Any symmetry allowed; it's 1-long anyway so symmetry means nothing
-    RR => Tb S[+3] # Only pointing upward in 3D
-    RG => GR S[x, Y] # Allowed in any 2D direction, no more
+    RR => Tb ^[+3] # Only pointing upward in 3D
+    RG => GR ^[x, Y] # Allowed in any 2D direction, no more
 end
 ````
 
@@ -291,7 +291,7 @@ Weights are stated as a multiplication or division right after the rule,
 end
 ````
 
-Weight modifiers must be specified after the mask (e.g. `%0.5 *3`) and before the [symmetry modifier](#symmetry) (e.g. `*3  S[ -x ]`).
+Weight modifiers must be specified after the mask (e.g. `%0.5 *3`) and before the [symmetry modifier](#symmetry) (e.g. `*3  ^[ -x ]`).
 
 #### Field bias
 
@@ -370,7 +370,7 @@ Instead of a flat string of characters like `a[bc]d_e[fgh]`, use Julia's multidi
   p q r ;;;
   s t u
   v w x
-]  *2  S[
+]  *2  ^[
     # Symmetry is now per-block-axis; read the section about it further below.
 
     #   Horizontal (X and Y) axes of the block must stay horizontal,
@@ -413,14 +413,14 @@ Here is an example of a full block symmetry modifier:
 
 ````julia
 # For a 2D block that only allows flipping of the X axis:
-S[   x[ x ], y[ +y ]   ]
+^[   x[ x ], y[ +y ]   ]
 # If we assume the grid is always 2D, it can be simplified:
-S[   y[ +y ]   ]   # (Y is fixed at +y, then X picks whatever's left)
+^[   y[ +y ]   ]   # (Y is fixed at +y, then X picks whatever's left)
 
 # For a 3D block that allows horizontal rotation/flips but no messing with the vertical:
-S[ x[x, y], y[x, y], z[ +z ] ]
+^[ x[x, y], y[x, y], z[ +z ] ]
 # Again, If we assume the grid is always 3D then it shortens a lot:
-S[z[+z]]
+^[z[+z]]
 ````
 
 #### Grouping axes
@@ -430,12 +430,12 @@ When two or more axes have a close relationship, you may group them together
 For example,
 
 ````julia
-S[  (x, y)[ (+x, +y), (+y, -x), (-x, -y), (-y, +x) ]  ]
+^[  (x, y)[ (+x, +y), (+y, -x), (-x, -y), (-y, +x) ]  ]
 ````
 
 allows the X and Y axes to rotate amongst themselves but not flip.
 
-> *This use-case has its own macro, `S[  (x, y)[ @rotations(x, y) ]  ]`.
+> *This use-case has its own macro, `^[  (x, y)[ @rotations(x, y) ]  ]`.
 
 The more complicated term `(x, y)[ (x, +y), (z, w), (w, z) ]` either allows the block's X to flip,
   or allows any orientation of the first two block axes along the grid's WZ plane.
@@ -443,7 +443,7 @@ The more complicated term `(x, y)[ (x, +y), (z, w), (w, z) ]` either allows the 
 Here is a 3D block symmetry that only allows full inversion of the block:
 
 ````julia
-S[
+^[
     (x, y, z)[ (+x, +y, +z), (-x, -y, -z) ]
 ]
 ````
@@ -453,7 +453,7 @@ S[
 One last feature is the ability to forbid sets of block axes from containing a flip,
   no matter where they end up, with the syntax `{axes...}`.
 For example if a 2D block should be able to sit anywhere in a grid but only through rotations,
-  you can write `S[ {x,y} ]`.
+  you can write `^[ {x,y} ]`.
 
 Suppose we're generating a 4D grid where the first axis is meant to be Time.
 The below 3D rewrite rule can be rotated any way in space,
@@ -468,7 +468,7 @@ The below 3D rewrite rule can be rotated any way in space,
   d e f ;;;
   g h i
   j k l
-] S[
+] ^[
     {x, y, z},
     x[ y, z, w ],
     y[ 2, 3, 4 ],
@@ -481,9 +481,9 @@ The below 3D rewrite rule can be rotated any way in space,
 To simplify the most common use-cases, some macros are provided that inject permutations.
 
 * `@rotations(axes...)` inserts the rotation permutations of two or more axes.
-You can limit the first two axes to only rotate between themselves by doing `S[   (x, y)[ @rotations(x, y) ]   ]`.
+You can limit the first two axes to only rotate between themselves by doing `^[   (x, y)[ @rotations(x, y) ]   ]`.
 You can limit the block axes `y`, `z`, and `w` to only rotate between three grid axes `x`, `y`, and `z`
-  by doing `S[   (y, z, w)[ @rotations(x, y, z) ]     ]`.
+  by doing `^[   (y, z, w)[ @rotations(x, y, z) ]     ]`.
 
 ## `@draw_box`
 

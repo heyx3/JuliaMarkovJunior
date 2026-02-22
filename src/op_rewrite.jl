@@ -38,6 +38,13 @@ struct RewriteRule_Strip{NCells, TCells<:NTuple{NCells, RewriteCell}}
     explicit_symmetries::Vector{GridDir}
     unlimited_symmetries_after_axis::Optional{Int} # If <1, then all symmetries are allowed and 'explicit_symmetries' is empty
 end
+Base.:(==)(a::RewriteRule_Strip{N, T}, b::RewriteRule_Strip{N, T}) where {N, T} = (
+    a.cells == b.cells &&
+    a.mask == b.mask &&
+    a.weight == b.weight &&
+    a.explicit_symmetries == b.explicit_symmetries &&
+    a.unlimited_symmetries_after_axis == b.unlimited_symmetries_after_axis
+)
 
 const MaskGrid{N} = Array{Float32, N}
 
@@ -228,6 +235,11 @@ struct MarkovOpRewrite1D{TRules <: Tuple{Vararg{RewriteRule_Strip}},
     threshold::Optional{Threshold}
     biases::TBias
 end
+Base.:(==)(a::MarkovOpRewrite1D{R, B}, b::MarkovOpRewrite1D{R, B}) where {R, B} = (
+    a.rules == b.rules &&
+    a.threshold == b.threshold &&
+    a.biases == b.biases
+)
 
 mutable struct MarkovOpRewrite1D_State{NDims, NRules, TGrid, TRules<:NTuple{NRules, RewriteRule_Strip},
                                        NBiases, TFullBias<:NTuple{NBiases, AbstractMarkovBias},
@@ -440,20 +452,33 @@ dsl_string(@nospecialize strip::RewriteRule_Strip) = string(
         error("Unhandled: ", typeof(strip.mask))
     end...,
     (isone(strip.weight) ? () : (" *", strip.weight))...,
-    (!isempty(strip.explicit_symmetries) || strip.unlimited_symmetries_after_axis>0) ? "" : string(
-        " S[ ",
+    if isempty(strip.explicit_symmetries) && (strip.unlimited_symmetries_after_axis < 1)
+        ()
+    else
         (
-            string(
-                (dir.sign < 0) ? '-' : '+',
-                (dir.axis < 5) ? ('x', 'y', 'z', 'w')[dir.axis] : dir.axis
-            ) for dir in strip.explicit_symmetries
-        )...,
-        ((strip.unlimited_symmetries_after_axis < 1) ? () : (
-            (isempty(strip.explicit_symmetries) ? () : (", ", ))...,
-            strip.unlimited_symmetries_after_axis, "..."
-        ))...,
-        " ]"
-    )
+            " ^[ ",
+            # Explicit symmetries:
+            Iterators.flatten(
+                iter_join(
+                    ((
+                        (dir.sign < 0) ? '-' : '+',
+                        (dir.axis < 5) ? ('x', 'y', 'z', 'w')[dir.axis] : dir.axis
+                    ) for dir in strip.explicit_symmetries),
+                    ", "
+                )
+            )...,
+            # Unlimited symmetries:
+            if isnothing(strip.unlimited_symmetries_after_axis)
+                ()
+            else
+                (
+                    isempty(strip.explicit_symmetries) ? "" : ", ",
+                    (strip.unlimited_symmetries_after_axis+1), "..."
+                )
+            end...,
+            " ]"
+        )
+    end...
 )
 
 dsl_string(@nospecialize op::MarkovOpRewrite1D) = string(
@@ -478,17 +503,292 @@ dsl_string(@nospecialize op::MarkovOpRewrite1D) = string(
             iter_join(dsl_string.(op.biases), "\n    ")...,
             "\nend"
         )
+    else
+        ""
     end
 )
 
+"Note that Source (lhs) patterns will return a Set as a List, for later processing"
+function parse_markovjunior_rewrite_rule_side(inputs::MacroParserInputs, loc, expr,
+                                              isSource::Bool)::Vector
+    push!(inputs.op_stack_trace, isSource ? "Left-hand side" : "Right-hand side")
+    try
+        try_lookup_char(c::Char)::Union{RewriteRuleCellSource, RewriteRuleCellDest} = if haskey(CELL_CODE_BY_CHAR, c)
+            CELL_CODE_BY_CHAR[c]
+        elseif c == '_'
+            RewriteRuleCell_Wildcard()
+        else
+            raise_error_at(loc, inputs,
+                           "Unsupported color value '", c, "'! Supported are ",
+                           "[ ", iter_join(keys(CELL_CODE_BY_CHAR), ", "), " ]")
+        end
+
+        # The complex sequence of pixel rules ultimately turns into a series of binary operators --
+        #   implicit multiplication, array indexing, braces.
+        # Start by flattening this AST into a simpler representation:
+        #     a list of Char, :set=>Vector{Char}, :list=>Vector{Char}, and :ref=>Int.
+        flatten_rule_expr(s::Symbol) = collect(string(s))
+        function flatten_rule_expr(e::Expr)
+            if @capture(e, a_{b_})
+                [ flatten_rule_expr(a)..., :set=>flatten_rule_expr(b) ]
+            elseif @capture(e, a_[b_])
+                [
+                    flatten_rule_expr(a)...,
+                    if b isa Integer
+                        :ref=>convert(Int, b)
+                    else
+                        :list=>flatten_rule_expr(b)
+                    end
+                ]
+            elseif @capture(e, [ a_ ])
+                if a isa Integer
+                    [ :ref=>convert(Int, a) ]
+                else
+                    [ :list=>flatten_rule_expr(a) ]
+                end
+            elseif @capture(e, {a_})
+                [ :set=>flatten_rule_expr(a) ]
+            elseif @capture(e, a_*b_)
+                [ flatten_rule_expr(a)..., flatten_rule_expr(b)... ]
+            else
+                raise_error_at(loc, inputs, "Unsupported bit of syntax: ", e)
+                @bp_check(false, "Unhandled: ", typeof(e), "(", e, ")")
+            end
+        end
+        flatten_rule_expr(o) = raise_error_at(loc, inputs, "Unsupported expression: ", typeof(o), "(", o, ")")
+
+        flattened = flatten_rule_expr(expr)
+
+        # Now turn each element into a proper data representation.
+        return collect(Union{RewriteRuleCellSource, RewriteRuleCellDest},
+                       Iterators.map(flattened) do simple_repr
+            if simple_repr isa Char
+                return try_lookup_char(simple_repr)
+            # If processing the Source side, we should keep sets as lists for now
+            #   as their order may be relevant to the Destination side.
+            elseif (simple_repr isa Pair) && (simple_repr[1] == :list)
+                invalid_elements = filter(c -> !isa(c, Char), simple_repr[2])
+                if isempty(invalid_elements)
+                    return RewriteRuleCell_List(Tuple(try_lookup_char.(simple_repr[2])))
+                else
+                    raise_error_at(loc, inputs,
+                                   "Invalid nested syntax in ", isSource ? "Source" : "Dest",
+                                     " part of rule!")
+                end
+            elseif (simple_repr isa Pair) && (simple_repr[1] == :set)
+                if isSource
+                    raise_error_at(loc, inputs, "'Set' syntax (`{RGB}`) not allowed on the Source side")
+                end
+
+                invalid_elements = filter(c -> !isa(c, Char), simple_repr[2])
+                if isempty(invalid_elements)
+                    return RewriteRuleCell_Set(simple_repr[2]...)
+                else
+                    raise_error_at(loc, inputs,
+                                   "Invalid nested syntax in ", isSource ? "Source" : "Dest",
+                                     " part of rule!")
+                end
+            elseif (simple_repr isa Pair) && (simple_repr[1] == :ref)
+                return RewriteRuleCell_Lookup(simple_repr[2])
+            else
+                @bp_check(false, "Unexpected: ", simple_repr)
+            end
+        end)
+    finally
+        pop!(inputs.op_stack_trace)
+    end
+end
+function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc, exprs)
+    if isnothing(exprs)
+        return (GridDir[ ], 1)
+    end
+
+    push!(inputs.op_stack_trace, "symmetry statement")
+    try
+        s_explicit = GridDir[ ]
+        s_start_idx::Optional{Int} = nothing
+        function get_axis(a::Union{Symbol, Int})
+            if a == :x
+                return 1
+            elseif a == :y
+                return 2
+            elseif a == :z
+                return 3
+            elseif a == :w
+                return 4
+            elseif a isa Symbol
+                raise_error_at(loc, inputs, "Invalid axis token `a`")
+            end
+
+            if a == 0
+                raise_error_at(loc, inputs, "Symmetry axes (and all other indices in Julia) are 1-based!")
+            elseif a < 0
+                return -a
+            elseif a > 0
+                return a
+            else
+                error("Unhandled: ", a)
+            end
+        end
+        for expr in exprs
+            if @capture(expr, a_...)
+                if exists(s_start_idx)
+                    raise_error_at(loc, inputs, "More than one use of the '...' syntax")
+                elseif (a isa Integer) && (a < 0)
+                    raise_error_at(loc, inputs, "Can't name a grid dir (+/-) with the '...' syntax")
+                else
+                    s_start_idx = get_axis(a)
+                end
+            elseif @capture(expr, +a_)
+                if !in(a, (:x, :y, :z, :w))
+                    raise_error_at(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
+                else
+                    push!(s_explicit, GridDir(get_axis(a), 1))
+                end
+            elseif @capture(expr, -a_)
+                if !in(a, (:x, :y, :z, :w))
+                    raise_error_at(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
+                else
+                    push!(s_explicit, GridDir(get_axis(a), -1))
+                end
+            elseif expr isa Int
+                if expr > 0
+                    push!(s_explicit, GridDir(expr, 1))
+                elseif expr < 0
+                    push!(s_explicit, GridDir(-expr, -1))
+                else
+                    raise_error_at(loc, inputs, "symmetry axes (and all indices in Julia) are 1-based! You passed a 0")
+                end
+            elseif expr isa Symbol
+                axis = get_axis(expr)
+                push!(s_explicit, GridDir(axis, -1))
+                push!(s_explicit, GridDir(axis, 1))
+            else
+                raise_error_at(loc, inputs, "Unsupported symmetry element: `", expr, "`")
+            end
+        end
+
+        # Validate the parsed data.
+        #   * No duplicates should exist:
+        duplicates = Set{GridDir}()
+        for (i, g) in enumerate(s_explicit)
+            for j in (i+1):length(s_explicit)
+                if g == s_explicit[j]
+                    push!(duplicates, g)
+                end
+            end
+        end
+        if !isempty(duplicates)
+            raise_error_at(loc, inputs, "Duplicate symmetry values found: ", collect(duplicates))
+        end
+        #   * The lower-bound should start after the explicit list:
+        max_explicit_axis = maximum((g.axis for g in s_explicit), init=-1)
+        if exists(s_start_idx) && (max_explicit_axis >= s_start_idx)
+            raise_error_at(loc, inputs,
+                           "Can't use '...' syntax at axis ", s_start_idx,
+                             " when you explicitly list other axes up to ", max_explicit_axis)
+        end
+
+        return s_explicit, s_start_idx
+    finally
+        pop!(inputs.op_stack_trace)
+    end
+end
 function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, expr)
     push!(inputs.op_stack_trace, "Rewrite rule `$expr`")
     try
-        if !@capture(expr, a_ => b_)
+        if !@capture(expr, lhsExpr_ => b_)
             raise_error_at(loc, inputs, "Invalid format; expected `src => dest [modifiers]`")
         end
 
-        #TODO: Finish.
+        # Strip out the modifiers.
+        # NOTE: MacroTools has a bug where the | operator doesn't always work.
+        weightMulScalar = nothing
+        weightDivScalar = nothing
+        symmetryExprs = nothing
+        maskExpr = nothing
+        @capture(b, (c_ * weightMulScalar_Real ^ [ symmetryExprs__ ])) ||
+            @capture(b, (c_ / weightDivScalar_Real ^ [ symmetryExprs__ ])) ||
+            @capture(b, (c_ ^ [ symmetryExprs__ ])) ||
+            @capture(b, (c_ * weightMulScalar_Real)) ||
+            @capture(b, (c_ / weightDivScalar_Real)) ||
+            (c = b)
+        @capture(c, (d_ % maskExpr_)) ||
+            (d = c)
+        rhsExpr = d
+
+        # Parse the modifiers.
+        weight = convert(Float32, if exists(weightMulScalar)
+            @bp_check(isnothing(weightDivScalar))
+            weightMulScalar
+        elseif exists(weightDivScalar)
+            @bp_check(isnothing(weightMulScalar))
+            1 / convert(Float64, weightDivScalar)
+        else
+            1
+        end)
+        mask = if @capture(maskExpr, maskAExpr_Real:maskBExpr_Real)
+            convert.(Ref(Float32), (maskAExpr, maskBExpr))
+        elseif maskExpr isa Real
+            convert(Float32, maskExpr)
+        elseif isnothing(maskExpr)
+            nothing
+        else
+            raise_error_at(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; Got `%$maskExpr`")
+        end
+        (symmetries_explicit, symmetries_infinite_start) = parse_markovjunior_rewrite_rule_symmetry(inputs, loc, symmetryExprs)
+
+        # Parse the rule.
+        lhs = parse_markovjunior_rewrite_rule_side(inputs, loc, lhsExpr, true)
+        rhs = parse_markovjunior_rewrite_rule_side(inputs, loc, rhsExpr, false)
+
+        # Post-process and validate the rule.
+        if length(lhs) != length(rhs)
+            raise_error_at(loc, inputs,
+                           "Source has ", length(lhs), " entries while Dest has ", length(rhs))
+        end
+        for i in 1:length(lhs)
+            # If source cell is currently a List, remake it as a Set.
+            # If dest cell is also a List, then its order needs to update accordingly.
+            if lhs[i] isa RewriteRuleCell_List
+                if rhs[i] isa RewriteRuleCell_List
+                    if length(lhs[i]) != length(rhs[i])
+                        raise_error_at(loc, inputs,
+                                       "Destination Cell ", i, " is a list of ", length(rhs[i]),
+                                       " elements, but its Source cell has ", length(lhs[i]),
+                                       " elements instead")
+                    else
+                        lhs_to_rhs = Dict{UInt8, UInt8}(
+                            L => R for (L, R) in zip(lhs[i], rhs[i])
+                        )
+                        lhs[i] = RewriteRuleCell_Set(lhs[i]...)
+                        rhs[i] = RewriteRuleCell_List(Tuple(lhs_to_rhs[L] for L in lhs[i]))
+                    end
+                else
+                    lhs[i] = RewriteRuleCell_Set(lhs[i]...)
+                end
+            end
+
+            # If dest cell is a list, the source cell must be too (at this point actually a Set).
+            if (rhs[i] isa RewriteRuleCell_List) && !isa(lhs[i], RewriteRuleCell_Set)
+                raise_error_at(loc, inputs, "Destination Cell ", i, " is a list, but its Source cell is not!")
+            end
+
+            # If dest cell references a source cell, that reference must be valid.
+            if (rhs[i] isa RewriteRuleCell_Lookup) && !in(rhs[i].source_idx, 1:length(lhs))
+                raise_error_at(loc, inputs,
+                               "Destination Cell ", i, " references nonexistent source cell ",
+                                 rhs[i].source_idx)
+            end
+        end
+
+        return RewriteRule_Strip(
+            Tuple(zip(lhs, rhs)),
+            mask,
+            weight,
+            symmetries_explicit,
+            isnothing(symmetries_infinite_start) ? nothing : symmetries_infinite_start-1
+        )
     finally
         pop!(inputs.op_stack_trace)
     end
@@ -514,10 +814,11 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
     end
 
     if length(args) == 3
+        parse_markovjunior_bias_statement(inputs, loc, args[3])
         return MarkovOpRewrite1D(
             parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2]),
             parse_markovjunior_threshold(inputs, loc, args[1]),
-            parse_markovjunior_bias_statement(inputs, loc, args[3])
+            Tuple(top(inputs.bias_stack))
         )
     elseif length(args) == 2
         if check_markovjunior_threshold_appearance(args[1])
@@ -527,10 +828,11 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
                 ()
             )
         else
+            parse_markovjunior_bias_statement(inputs, loc, args[2])
             return MarkovOpRewrite1D(
                 parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1]),
                 nothing,
-                parse_markovjunior_bias_statement(inputs, loc, args[2])
+                Tuple(top(inputs.bias_stack))
             )
         end
     elseif length(args) == 1

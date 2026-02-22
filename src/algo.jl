@@ -65,6 +65,13 @@ struct MarkovAlgorithm
     pragmas::Vector{Pair{Symbol, Vector{Any}}} # Nonstandard commands meant to be parsed by the user of this package
     sequence::Vector{AbstractMarkovOp}
 end
+Base.:(==)(a::MarkovAlgorithm, b::MarkovAlgorithm) = (
+    a.initial_fill == b.initial_fill &&
+    a.fixed_dimension == b.fixed_dimension &&
+    a.min_dimension == b.min_dimension &&
+    a.pragmas == b.pragmas &&
+    a.sequence == b.sequence
+)
 
 
 "Information about the algorithm state relevant to a Bias struct"

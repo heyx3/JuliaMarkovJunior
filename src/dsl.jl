@@ -2,7 +2,7 @@
 #  dsl_string()
 
 dsl_string(c::Char) = c
-dsl_string(u::UInt8) = CELL_CODE_BY_CHAR[u+1].char
+dsl_string(u::UInt8) = (u == CELL_CODE_INVALID) ? CELL_CHAR_INVALID : CELL_TYPES[u+1].char
 dsl_string(s::CellTypeSet) = string(dsl_string.(s)...)
 
 dsl_string(i::Int) = i
@@ -15,12 +15,14 @@ dsl_string(ma::MarkovAlgorithm) = string(
     exists(ma.fixed_dimension) ? "$(ma.fixed_dimension) " : "",
     "begin
     ",
-    iter_join(("@pragma $name $(iter_join(args, " "))"
+    iter_join(
+        ("@pragma $name $(iter_join(args, " ")...)"
                 for (name, args) in ma.pragmas),
-              "\n    ")...,
+        "\n    "
+    )...,
     "
     ",
-    iter_join(dsl_string.(pma.main_sequence.list), "\n    ")...,
+    iter_join(dsl_string.(ma.sequence), "\n    ")...,
     "
     end"
 )
@@ -113,8 +115,8 @@ function parse_markovjunior(_macro_args)::MarkovAlgorithm
 
     # Grab the main sequence.
     inputs = MacroParserInputs(initial_fill, dims, get_something(dims, 1), Stack{Any}(16), Stack{Vector{AbstractMarkovBias}}(16))
-    push!(inputs.op_stack, "Main Sequence")
-    main_sequence = Vector{AbstractSequence}()
+    push!(inputs.op_stack_trace, "Main Sequence")
+    main_sequence = Vector{AbstractMarkovOp}()
     pragmas = Vector{Pair{Symbol, Vector{Any}}}()
     for (i, a) in enumerate(macro_args)
         if a isa Expr && a.head == :block
@@ -124,7 +126,7 @@ function parse_markovjunior(_macro_args)::MarkovAlgorithm
                         raise_error_at(line, inputs,
                                        "@pragma statement must have a name, e.g. @pragma Viz")
                     else
-                        push!(pragmas, collect(Any, prg[2:end]))
+                        push!(pragmas, prg[1]=>collect(Any, prg[2:end]))
                     end
                     return true
                 else
@@ -150,7 +152,7 @@ function parse_markovjunior(_macro_args)::MarkovAlgorithm
                            pragmas, main_sequence)
 end
 "Tries to evaluate a `@markovjunior` macro, throwing an error if that's not what was parsed"
-function parse_markovjunior(syntax::Union{String, Expr})::ParsedMarkovAlgorithm
+function parse_markovjunior(syntax::Union{String, Expr})::MarkovAlgorithm
     if syntax isa String
         return parse_markovjunior(Meta.parse(syntax))
     elseif !Base.isexpr(syntax, :macrocall) || (syntax.args[1] != Symbol("@markovjunior"))
@@ -171,19 +173,25 @@ export ParsedMarkovAlgorithm, @markovjunior, parse_markovjunior,
 
 "Raises an error using the given LineNumberNode to point to user source"
 function raise_error_at(src::Optional{LineNumberNode}, state::MacroParserInputs, msg...)
+    stringify_ast(x) = if x isa Union{Symbol, Expr}
+        string(x)
+    else
+        x
+    end
     error_args = Any[
         "ERROR at ",
-        iter_join(
-            state.op_stack_trace,
+        stringify_ast.(iter_join(
+            reverse!(collect(state.op_stack_trace)),
             " \\\\ "
-        )...,
+        ))...,
         ":\n\t",
-        msg...
+        stringify_ast.(msg)...
     ]
-    if exists(src)
-        eval(Expr(:block, src, :( error($(error_args...)) )))
-    else
+
+    if isnothing(src)
         error(error_args...)
+    else
+        eval(Expr(:block, src, :( error($(error_args...)) )))
     end
 end
 
@@ -197,8 +205,8 @@ If not, then this function looks for a macro call and assumes it's an op.
 
 Any other unhandled lines turn into an error.
 "
-function parse_markovjunior_sequence(try_handle_line, inputs::MacroParserInputs, block_args)::Vector{AbstractSequence}
-    output = Vector{AbstractSequence}()
+function parse_markovjunior_sequence(try_handle_line, inputs::MacroParserInputs, block_args)::Vector{AbstractMarkovOp}
+    output = Vector{AbstractMarkovOp}()
     i = Ref(0)
     parse_markovjunior_block(block_args) do location, line
         i[] += 1
@@ -219,7 +227,7 @@ function parse_markovjunior_sequence(try_handle_line, inputs::MacroParserInputs,
     end
     return output
 end
-function parse_markovjunior_sequence(inputs::MacroParserInputs, block_args)::Vector{AbstractSequence}
+function parse_markovjunior_sequence(inputs::MacroParserInputs, block_args)::Vector{AbstractMarkovOp}
     return parse_markovjunior_sequence((loc, line) -> false, inputs, block_args)
 end
 
@@ -229,12 +237,12 @@ Processes a bias statement/block-of-statements,
 "
 function parse_markovjunior_bias_statement(inputs::MacroParserInputs, location, biases)
     # Define how to process each statement.
-    biases = Vector{AbstractMarkovBias}()
+    output = Vector{AbstractMarkovBias}()
     function process_line(location, line)
         push!(inputs.op_stack_trace, "Bias \"$line\"")
         try
             if @capture line f_Symbol(args__)
-                push!(biases, parse_markovjunior_bias(Val(f), inputs, location, line))
+                push!(output, parse_markovjunior_bias(Val(f), inputs, location, args))
             else
                 raise_error_at(location, inputs,
                                "Invalid bias syntax! Expected a function call, got:", line)
@@ -245,7 +253,7 @@ function parse_markovjunior_bias_statement(inputs::MacroParserInputs, location, 
     end
 
     # Process each statement.
-    if @match biases f_Symbol(args__)
+    if @capture biases f_Symbol(args__)
         process_line(location, biases)
     elseif Base.isexpr(biases, :block)
         parse_markovjunior_block(process_line, biases)
@@ -255,9 +263,9 @@ function parse_markovjunior_bias_statement(inputs::MacroParserInputs, location, 
     end
 
     # Validate the result.
-    if !isempty(biases)
-        push!(inputs.bias_stack)
-        for T in unique(typeof, Iterators.flatten(inputs.bias_stack))
+    if !isempty(output)
+        push!(inputs.bias_stack, output)
+        for T in unique(typeof.(Iterators.flatten(inputs.bias_stack)))
             check_markovjunior_biases(T, inputs)
         end
     end
@@ -270,12 +278,11 @@ This doesn't guarantee the threshold is well-formed!
 It's meant to disambiguate statements containing optional thresholds and other optional things.
 You need to make sure those other things can't look like thresholds.
 "
-check_markovjunior_threshold_appearance(expr)::Bool = @capture(expr,
-    x_Integer |
-    (length/x_) | (length*x_) | (x_*length) |
-    (area/x_) | (area*x_) | (x_*area) |
-    (a_:b_)
-)
+check_markovjunior_threshold_appearance(expr)::Bool =
+    #NOTE: The '|' operator is broken in @capture sadly.
+    (expr isa Integer) || @capture(expr, a_:b_) ||
+    @capture(expr, length/x_) || @capture(expr, length*x_) || @capture(expr, x_*length) ||
+    @capture(expr, area/x_) || @capture(expr, area*x_) || @capture(expr, x_*area)
 parse_markovjunior_threshold(inputs::MacroParserInputs, location, threshold_expr)::Threshold = parse_markovjunior_threshold(
     expr -> nothing,
     inputs, location, threshold_expr
@@ -291,11 +298,11 @@ function parse_markovjunior_threshold(try_handle,
             return convert(Int, threshold_expr)
         elseif @capture threshold_expr (area/x_Real)
             return ThresholdByArea(convert(Float32, 1/x))
-        elseif @capture threshold_expr (area*x_Real)|(x_Real*area)
+        elseif @capture(threshold_expr, (area*x_Real)) || @capture(threshold_expr, (x_Real*area))
             return ThresholdByArea(convert(Float32, x))
         elseif @capture threshold_expr (length/x_Real)
             return ThresholdByLength(convert(Float32, 1/x))
-        elseif @capture threshold_expr (length*x_Real)|(x_Real*length)
+        elseif @capture(threshold_expr, (length*x_Real)) || @capture(threshold_expr, (x_Real*length))
             return ThresholdByLength(convert(Float32, x))
         elseif @capture threshold_expr (a_:b_)
             aa = begin
