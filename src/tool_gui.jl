@@ -9,8 +9,6 @@ end
 const gVec2 = Bplus.GUI.gVec2
 const gVec4 = Bplus.GUI.gVec4
 
-const RENDER_2D_MODE_NAMES = collect(string.(Render2DMode.instances()))
-
 "User state that should persist between program runs; serializable to/from JSON"
 mutable struct GuiMemory
     #TODO: Window size/fullscreen
@@ -30,7 +28,7 @@ mutable struct GuiMemory
 end
 GuiMemory() = GuiMemory(
     2, [ 64, 64 ],
-    FALLBACK_SCENE, read(scenes_path(FALLBACK_SCENE), String),
+    FALLBACK_SCENE_NAME, read(path_scene(FALLBACK_SCENE_NAME), String),
     "0x1234567890abcdef",
     false, 150, 10, 1000, 10
 )
@@ -54,19 +52,13 @@ Base.copy(m::GuiMemory) = GuiMemory((
 
 "The state of the GUI for our MarkovJunior tool"
 mutable struct GuiRunner
-    draw_monochrome::Bool
-
     memory::GuiMemory
 
-    state_grid::CellGrid
-    state_grid_tex2D_slice::CellGrid{2}
     state_texture::Texture
+    state_texture_pixel_buffer::Array{v3f, 2}
 
-    algorithm::ParsedMarkovAlgorithm
-    algorithm_state::Optional
-    algorithm_rng::PRNG
-
-    render2D::Render2DData
+    algorithm::MarkovAlgorithm
+    algorithm_state::Optional{MarkovAlgoState}
 
     current_seed::UInt64
     current_seed_display::String
@@ -81,6 +73,8 @@ mutable struct GuiRunner
     current_scene_has_changes::Bool
 
     time_till_next_tick::Float32
+    textures_to_destroy::Vector{Texture} # Textures are deleted the frame *after* they're no longer used,
+                                         #  in case Dear ImGUI still has instructions to render them
 end
 
 function GuiRunner(memory::GuiMemory,
@@ -91,27 +85,25 @@ function GuiRunner(memory::GuiMemory,
     query_available_scenes!(available_scenes)
     scene_idx = get_something(findfirst(s -> s == memory.current_scene_file_name, available_scenes), 0)
 
-    parsed_algo::ParsedMarkovAlgorithm = try
+    parsed_algo::MarkovAlgorithm = try
         parse_markovjunior(memory.current_scene_src)
     catch e
-        initial_error_msg = "Unable to compile initial scene (fallback used instead):\n$(sprint(showerror, e))"
-        parse_markovjunior(read(scenes_path(FALLBACK_SCENE), String))
+        initial_error_msg = string(
+            "Unable to compile initial scene (fallback used instead):\n",
+            sprint(showerror, e)
+        )
+        parse_markovjunior(read(path_scene(FALLBACK_SCENE_NAME), String))
     end
 
     runner = GuiRunner(
-        false,
-
         memory,
 
-        fill(zero(UInt8), memory.next_resolution...),
-        fill(zero(UInt8), memory.next_resolution...),
-        Texture(SpecialFormats.rgb10_a2, 2), # 1D texture so the update logic immediately catches it
+        Texture(SpecialFormats.rgb10_a2, 1), # 1D texture so the lazy-init logic catches it
+        fill(zero(v3f), memory.next_resolution...),
 
-        parsed_algo, nothing, PRNG(1),
+        parsed_algo, nothing,
 
-        Render2DData(),
-
-        # Current seed will be parsed+stringified next; we just need the textbox to be set up.
+        # Current seed will be parsed+stringified in a moment; we just need the textbox to be set up.
         zero(UInt64), "[UNINITIALIZED]",
         GuiText(string(memory.current_seed_src)),
 
@@ -127,7 +119,8 @@ function GuiRunner(memory::GuiMemory,
         # 'current_scene_has_changes' will be computed next.
         false,
 
-        -1.0f0
+        -1.0f0,
+        Vector{Texture}()
     )
 
     reset_gui_runner_algo(runner, true, false, true)
@@ -138,13 +131,14 @@ function GuiRunner(memory::GuiMemory,
 end
 function Base.close(runner::GuiRunner)
     close(runner.state_texture)
-    isassigned(runner.render2D.output) && close(runner.render2D.output[])
+    exists(runner.algorithm_state) && close(runner.algorithm_state, runner.algorithm)
+    foreach(close, runner.textures_to_destroy)
 end
 
 function query_available_scenes!(output::Vector{String}, empty_output_first::Bool=true)
     empty_output_first && empty!(output)
     append!(output, (
-        name for name in readdir(scenes_path())
+        name for name in readdir(SCENES_PATH)
           if endswith(name, ".jl")
     ))
     return nothing
@@ -159,7 +153,7 @@ function update_gui_runner_scenes!(runner::GuiRunner)
         next_scene_idx = findfirst(s -> s == runner.memory.current_scene_file_name, runner.available_scenes)
 
         open(io -> write(io, string(runner.next_algorithm)),
-             scenes_path(runner.memory.current_scene_file_name),
+             path_scene(runner.memory.current_scene_file_name),
              "w")
         runner.current_scene_has_changes = false
 
@@ -169,7 +163,7 @@ function update_gui_runner_scenes!(runner::GuiRunner)
         )
     else
         runner.current_scene_has_changes = (runner.memory.current_scene_src !=
-            read(scenes_path(runner.memory.current_scene_file_name), String)
+            read(path_scene(runner.memory.current_scene_file_name), String)
         )
     end
 
@@ -178,38 +172,58 @@ function update_gui_runner_scenes!(runner::GuiRunner)
 end
 
 function update_gui_runner_texture_2D(runner::GuiRunner)
-    if (runner.state_texture.type != TexTypes.twoD) || (runner.state_texture.size.xy != vsize(runner.state_grid).xy)
-        close(runner.state_texture)
+    # Generate the pixel buffer for upload to the GPU.
+    if vsize(runner.state_texture_pixel_buffer) != vsize(runner.algorithm_state.grid[])
+        runner.state_texture_pixel_buffer = fill(zero(v3f), runner.state_texture.size.xy...)
+    end
+    convert_pixel(u::UInt8) = if u == CELL_CODE_INVALID
+        v3f(1, 0, 1)
+    else
+        CELL_TYPES[u+1].color
+    end
+
+    N = ndims(runner.algorithm_state.grid[])
+    if N < 3
+        runner.state_texture_pixel_buffer .= convert_pixel.(runner.algorithm_state.grid[])
+    else
+        runner.state_texture_pixel_buffer .= convert_pixel.(runner.algorithm_state.grid[])[
+            :, :,
+            (1 for i in 3:N)...
+        ]
+    end
+ 
+    # Update the GPU texture.
+    if (runner.state_texture.type != TexTypes.twoD) || (runner.state_texture.size.xy != vsize(runner.algorithm_state.grid[]).xy)
+        push!(runner.textures_to_destroy, runner.state_texture)
         runner.state_texture = Texture(
             SimpleFormat(
-                FormatTypes.uint,
-                SimpleFormatComponents.R,
-                SimpleFormatBitDepths.B8 # 4-bit isn't valid because there's only one component
+                FormatTypes.normalized_uint,
+                SimpleFormatComponents.RGB,
+                SimpleFormatBitDepths.B8
             ),
-            runner.state_grid,
-            sampler = TexSampler{ndims(runner.state_grid)}(
+            runner.state_texture_pixel_buffer,
+            sampler = TexSampler{ndims(runner.algorithm_state.grid[])}(
                 pixel_filter = PixelFilters.rough
             ),
             n_mips = 1
         )
-        runner.state_grid_tex2D_slice = fill(zero(UInt8), runner.state_texture.size.xy...)
     else
-        runner.state_grid_tex2D_slice .= @view runner.state_grid[
-            ntuple(i -> (i>2) ? 1 : Colon(),
-                   ndims(runner.state_grid))...
-        ]
-        set_tex_pixels(runner.state_texture, runner.state_grid_tex2D_slice)
+        set_tex_pixels(runner.state_texture, runner.state_texture_pixel_buffer)
     end
-
-    render_markov_2d(runner.state_grid_tex2D_slice, v3f(1, 0, 1),
-                     runner.render2D,
-                     runner.algorithm.main_sequence, runner.algorithm_state)
 
     return nothing
 end
 
 function reset_gui_runner_algo(runner::GuiRunner,
                                parse_new_seed::Bool, parse_new_algorithm::Bool, update_resolution::Bool)
+    old_grid_size::Tuple = if exists(runner.algorithm_state)
+        size(runner.algorithm_state.grid[])
+    else
+        (1, 1)
+    end
+    new_resolution::Vector{Int32} = [ Int32.(old_grid_size)... ]
+    new_dims = length(old_grid_size)
+
     # Re-parse the algorithm if requested.
     if parse_new_algorithm
         runner.algorithm_error_msg = ""
@@ -224,41 +238,33 @@ function reset_gui_runner_algo(runner::GuiRunner,
             )
             runner.algorithm
         end
-
-        # If the algorithm has a fixed dimensionality, trim 'next_resolution' to fit.
-        n_dims = markov_fixed_dimension(runner.algorithm)
-        if exists(n_dims)
-            while length(runner.memory.next_resolution) < n_dims
-                push!(runner.memory.next_resolution, one(Int32))
-            end
-            while length(runner.memory.next_resolution) > n_dims
-                deleteat!(runner.memory.next_resolution, length(runner.memory.next_resolution))
-            end
-        end
     end
-
-    # Initialize the grid, updating resolution if requested.
+    # Update resolution from the GUI editor, if requested.
     if update_resolution
-        dimensions = let d = markov_fixed_dimension(runner.algorithm)
-            if exists(d)
-                d
-            else
-                runner.memory.next_dimensionality
-            end
+        if !exists(runner.algorithm.fixed_dimension)
+            new_dims = runner.memory.next_dimensionality
         end
-        resolution = let r = markov_fixed_resolution(runner.algorithm)
-            if exists(r)
-                r
-            else
-                Tuple(runner.memory.next_resolution)
-            end
-        end
-        runner.state_grid = fill(runner.algorithm.initial_fill, resolution)
-    else
-        fill!(runner.state_grid, runner.algorithm.initial_fill)
+        new_dims = max(new_dims, runner.algorithm.min_dimension)
+
+        new_resolution = copy(runner.memory.next_resolution)
     end
 
-    # Initialize the RNG, updating seed if requested.
+    # Finalize the dimensionality and resolution.
+    if exists(runner.algorithm.fixed_dimension)
+        new_dims = runner.algorithm.fixed_dimension
+    end
+    new_dims = max(new_dims, runner.algorithm.min_dimension)
+    new_resolution = map(1:new_dims) do i
+        if i > length(new_resolution)
+            one(Int32)
+        else
+            new_resolution[i]
+        end
+    end
+    runner.memory.next_dimensionality = new_dims
+    runner.memory.next_resolution = new_resolution
+
+    # Update the RNG seed if requested.
     if parse_new_seed
         @markovjunior_assert(runner.memory.current_seed_src == string(runner.next_seed))
 
@@ -271,35 +277,41 @@ function reset_gui_runner_algo(runner::GuiRunner,
 
         runner.current_seed_display = "Seed: 0x$(string(runner.current_seed, base=16))"
     end
-    runner.algorithm_rng = PRNG(PrngStrength.strong, runner.current_seed)
 
-    # Initialize the algorithm sequence.
-    runner.algorithm_state = start_sequence(
-        runner.algorithm.main_sequence,
-        runner.state_grid, AllInference(),
-        runner.algorithm_rng
-    )
+    # Finally, we can start the algorithm!
+    runner.algorithm_state = markov_algo_start(runner.algorithm, Tuple(new_resolution), runner.current_seed)
+    if size(runner.algorithm_state.grid[]) != size(runner.state_texture_pixel_buffer)
+        runner.state_texture_pixel_buffer = let N = ndims(runner.algorithm_state.grid[])
+            if N == 1
+                fill(zero(v3f), length(runner.algorithm_state.grid[]), 1)
+            elseif N == 2
+                fill(zero(v3f), size(runner.algorithm_state.grid[]))
+            else
+                fill(zero(v3f), size(runner.algorithm_state.grid[])[1:2])
+            end
+        end
+    end
 
     return nothing
 end
-function step_gui_runner_algo(runner::GuiRunner)
-    if exists(runner.algorithm_state)
-        runner.algorithm_state = execute_sequence(
-            runner.algorithm.main_sequence,
-            runner.state_grid, runner.algorithm_rng,
-            runner.algorithm_state
-        )
+function step_gui_runner_algo(runner::GuiRunner, n_iterations::Int)
+    if exists(runner.algorithm_state) && !markov_algo_is_finished(runner.algorithm, runner.algorithm_state)
+        markov_algo_step(runner.algorithm, runner.algorithm_state, n_iterations)
     end
 
     return nothing
 end
 
-gui_runner_is_finished(runner::GuiRunner)::Bool = isnothing(runner.algorithm_state)
+gui_runner_is_finished(runner::GuiRunner)::Bool = isnothing(runner.algorithm_state) ||
+                                                  markov_algo_is_finished(runner.algorithm, runner.algorithm_state)
 
 function gui_main(runner::GuiRunner, delta_seconds::Float32)
     print_wnd_sizes::Bool = false && @markovjunior_debug(rand(Float32) < 0.01, false)
     pane_flags = CImGui.LibCImGui.ImGuiWindowFlags_HorizontalScrollbar |
                  (CImGui.LibCImGui.ImGuiWindowFlags_NoDecoration & (~CImGui.LibCImGui.ImGuiWindowFlags_NoScrollbar))
+
+    foreach(close, runner.textures_to_destroy)
+    empty!(runner.textures_to_destroy)
 
     gui_next_window_space(
         Box2Df(
@@ -314,38 +326,12 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
 
         should_update_texture = Ref(false)
 
-        # Display a 'render mode' selection box.
-        current_render2D_mode_idx = convert(Int32, Render2DMode.to_index(runner.render2D.mode)-1)
-        next_render2D_mode_idx = current_render2D_mode_idx
-        @c CImGui.ListBox("Mode", &current_render2D_mode_idx, RENDER_2D_MODE_NAMES, length(RENDER_2D_MODE_NAMES))
-        if next_render2D_mode_idx != current_render2D_mode_idx
-            should_update_texture[] = true
-        end
-        runner.render2D.mode = Render2DMode.from_index(convert(Int, current_render2D_mode_idx+1))
-        # Display info about the current render mode.
-        CImGui.SameLine(0, 15)
-        gui_within_group() do
-            if runner.render2D.mode == Render2DMode.normal
-                CImGui.Dummy(1, 1)
-            elseif runner.render2D.mode == Render2DMode.potentials
-                CImGui.Text("Potential range: ")
-                CImGui.Text(@sprintf("%f to %f",
-                    min_inclusive(runner.render2D.inference_potentials_range),
-                    max_inclusive(runner.render2D.inference_potentials_range)
-                ))
-            else
-                error("Unhandled: ", runner.render2D.mode)
-            end
-        end
-
-        CImGui.Separator()
-
         # Current state:
-        img_size = convert(v2f, runner.render2D.output[].size.xy)
+        img_size = convert(v2f, runner.state_texture.size.xy)
         min_img_size::Float32 = content_size.x - 10
         scale::Float32 = max(1.0f0, (min_img_size / img_size)...)
         @set! img_size *= scale
-        CImGui.Image(gui_tex_handle(runner.render2D.output[]),
+        CImGui.Image(gui_tex_handle(runner.state_texture),
                      convert(gVec2, img_size),
                      gVec2(0, 0), gVec2(1, 1),
                      gVec4(1, 1, 1, 1), gVec4(0, 0, 0, 0))
@@ -355,11 +341,13 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         # Execute Play logic.
         if runner.memory.is_playing && !gui_runner_is_finished(runner)
             runner.time_till_next_tick -= delta_seconds
+            n_ticks = 0
             while runner.time_till_next_tick <= 0
-                step_gui_runner_algo(runner)
+                n_ticks += 1
                 should_update_texture[] = true
                 runner.time_till_next_tick += 1.0f0 / runner.memory.ticks_per_second
             end
+            step_gui_runner_algo(runner, n_ticks)
         end
 
         # Runner control panel, diagram below:
@@ -397,7 +385,7 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
             CImGui.Dummy(0, BUTTON_VPAD_RUN_PLAIN)
             CImGui.SetNextItemWidth(-1)
             if CImGui.Button("Step", BUTTON_SIZE_RUN_PLAIN)
-                step_gui_runner_algo(runner)
+                step_gui_runner_algo(runner, 1)
                 should_update_texture[] = true
             end
         CImGui.TableNextColumn()
@@ -417,10 +405,8 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
             CImGui.Dummy(0, BUTTON_VPAD_RUN_PLAIN)
             CImGui.SetNextItemWidth(-1)
             if CImGui.Button("Jump", BUTTON_SIZE_RUN_PLAIN)
-                for i in 1:runner.memory.ticks_per_jump
-                    step_gui_runner_algo(runner)
-                    should_update_texture[] = true
-                end
+                step_gui_runner_algo(runner, convert(Int, runner.memory.ticks_per_jump))
+                should_update_texture[] = true
             end
         CImGui.TableNextColumn()
             CImGui.Dummy(0, UNITS_VPAD)
@@ -435,15 +421,10 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
                               CImGui.LibCImGui.ImGuiCol_Button, BUTTON_COLOR_RUN_SPECIAL)
             #begin
                 Profile.start_timer()
-                for i in 1:runner.memory.ticks_for_profile
-                    step_gui_runner_algo(runner)
-                    if gui_runner_is_finished(runner)
-                        break
-                    end
-                end
+                step_gui_runner_algo(runner, runner.memory.ticks_for_profile)
                 Profile.stop_timer()
 
-                prof_text_path = locals_path("ProfileResult.txt")
+                prof_text_path = path_local("ProfileResult.txt")
                 open(prof_text_path, "w") do io::IO
                     ctx = IOContext(io, :displaysize=>(5000, 999999))
 
@@ -501,7 +482,7 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
             #begin
                 start_t = time()
                 while !gui_runner_is_finished(runner)
-                    step_gui_runner_algo(runner)
+                    step_gui_runner_algo(runner, 50) #TODO: gradually increase tick count and time it
                     should_update_texture[] = true
                     if (time() - start_t) > runner.memory.max_seconds_for_run_to_end
                         runner.algorithm_error_msg = string(
@@ -539,6 +520,7 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
             new_seed = hash(string(runner.next_seed))
         end
         gui_within_group() do
+            CImGui.Dummy(1, 10)
             CImGui.Text(runner.current_seed_display)
             CImGui.Dummy(10, 0); CImGui.SameLine()
             gui_with_item_width(150) do
@@ -550,53 +532,59 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         end
         seed_has_changed::Bool = (new_seed != runner.current_seed)
         CImGui.SameLine(0, 40)
-        if gui_with_style(() -> CImGui.Button("Reset with new seed", v2f(150, 32)) && seed_has_changed,
-                          LCIG.ImGuiCol_Button, v3f(0.2, 0.1, 0.1),
-                          unchanged = seed_has_changed)
-        #begin
-            reset_gui_runner_algo(runner, true, false, false)
-            should_update_texture[] = true
+        gui_within_group() do
+            if gui_with_style(() -> CImGui.Button("Reset with new seed", v2f(150, 32)) && seed_has_changed,
+                            LCIG.ImGuiCol_Button, v3f(0.2, 0.1, 0.1),
+                            unchanged = seed_has_changed)
+            #begin
+                reset_gui_runner_algo(runner, true, false, false)
+                should_update_texture[] = true
+            end
+            if CImGui.Button("Reset with rnd seed", v2f(150, 32))
+                runner.memory.current_seed_src = string(rand(UInt64))
+                update!(runner.next_seed, runner.memory.current_seed_src)
+
+                reset_gui_runner_algo(runner, true, false, false)
+                should_update_texture[] = true
+            end
         end
 
         CImGui.Separator()
 
         # Resolution data:
-        fixed_dims = markov_fixed_dimension(runner.algorithm)
-        fixed_resolution::Optional{Tuple} = markov_fixed_resolution(runner.algorithm)
-        dims = convert(Int32, get_something(fixed_dims, runner.memory.next_dimensionality))
-        resolution::Vector = if exists(fixed_resolution)
-            collect(fixed_resolution)
-        else
-            runner.memory.next_resolution
-        end
         gui_with_item_width(60) do
-            if exists(fixed_dims)
-                CImGui.LabelText("Dimension", string(dims))
+            if exists(runner.algorithm.fixed_dimension)
+                CImGui.LabelText("Dimension", string(runner.memory.next_dimensionality))
             else
-                @c CImGui.InputInt("Dimension", &dims)
-                runner.memory.next_dimensionality = clamp(dims, 2, 3)
-                dims = runner.memory.next_dimensionality
+                d = convert(Int32, runner.memory.next_dimensionality)
+                @c CImGui.InputInt("Dimension", &d)
+                runner.memory.next_dimensionality = clamp(
+                    d,
+                    max(2, runner.algorithm.min_dimension),
+                    max(3, runner.algorithm.min_dimension)
+                )
+                d = runner.memory.next_dimensionality
             end
             CImGui.SameLine(0, 30)
             # Update the resolution to match the dimensions.
-            while length(runner.memory.next_resolution) < dims
-                push!(runner.memory.next_resolution, 1)
+            while length(runner.memory.next_resolution) < runner.memory.next_dimensionality
+                push!(runner.memory.next_resolution, one(Int32))
             end
-            while length(runner.memory.next_resolution) > dims
+            while length(runner.memory.next_resolution) > runner.memory.next_dimensionality
                 deleteat!(runner.memory.next_resolution, length(runner.memory.next_resolution))
             end
-            if exists(fixed_resolution)
-                CImGui.LabelText("Resolution", string(fixed_resolution))
-            elseif dims == 2
-                CImGui.InputInt2("Resolution", Ref(resolution, 1))
-            elseif dims == 3
-                CImGui.InputInt3("Resolution", Ref(resolution, 1))
+            if runner.memory.next_dimensionality == 2
+                CImGui.InputInt2("Resolution", Ref(runner.memory.next_resolution, 1))
+            elseif runner.memory.next_dimensionality == 3
+                CImGui.InputInt3("Resolution", Ref(runner.memory.next_resolution, 1))
             else
-                CImGui.Text("ERROR: Unhandled: $dims/$resoution")
+                CImGui.Text("UNHANDLED dim $(runner.memory.next_dimensionality)")
             end
         end
-        resolution_is_different::Bool = (dims != ndims(runner.state_grid)) ||
-                                        any(t->t[1]!=t[2], zip(resolution, size(runner.state_grid)))
+        resolution_is_different::Bool =
+            (runner.memory.next_dimensionality != ndims(runner.algorithm_state.grid[])) ||
+            any(t -> t[1]!=t[2],
+                zip(runner.memory.next_resolution, size(runner.algorithm_state.grid[])))
         CImGui.SameLine(0, 10)
         gui_with_style(CImGui.LibCImGui.ImGuiCol_Button, v3f(0.2, 0.1, 0.1), unchanged=resolution_is_different) do
          gui_with_style(CImGui.LibCImGui.ImGuiCol_ButtonHovered, v3f(0.2, 0.1, 0.1), unchanged=resolution_is_different) do
@@ -658,14 +646,14 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
           gui_with_style(CImGui.LibCImGui.ImGuiCol_ButtonActive, v3f(0.2, 0.1, 0.1), unchanged=runner.current_scene_has_changes) do
             if CImGui.Button("Reset changes", BUTTON_SIZE) && runner.current_scene_has_changes
                 update!(runner.next_algorithm,
-                        read(scenes_path(runner.memory.current_scene_file_name), String))
+                        read(path_scene(runner.memory.current_scene_file_name), String))
                 runner.memory.current_scene_src = string(runner.next_algorithm)
                 runner.current_scene_has_changes = false
             end
             CImGui.SameLine(0, 20)
             if CImGui.Button("Save changes", BUTTON_SIZE) && runner.current_scene_has_changes
                 open(io -> print(io, string(runner.next_algorithm)),
-                     scenes_path(runner.memory.current_scene_file_name),
+                     path_scene(runner.memory.current_scene_file_name),
                      "w")
                 runner.current_scene_has_changes = false
             end
@@ -677,7 +665,7 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         if (next_scene_idx_c+1 != runner.current_scene_idx) && !runner.current_scene_has_changes
             runner.current_scene_idx = next_scene_idx_c+1
             runner.memory.current_scene_file_name = runner.available_scenes[runner.current_scene_idx]
-            update!(runner.next_algorithm, read(scenes_path(runner.memory.current_scene_file_name), String))
+            update!(runner.next_algorithm, read(path_scene(runner.memory.current_scene_file_name), String))
         end
     end
 

@@ -422,12 +422,15 @@ function test_compare(a::MJ.MarkovOpRewrite1D, b::MJ.MarkovOpRewrite1D)
     return nothing
 end
 
-# println("-------------------------------------------------\nEXPECTED:\n",
-#         MJ.dsl_string(BIG_TEST_ANSWER), "\n\n\n")
-# println("-------------------------------------------------\nACTUAL:\n",
-#         MJ.dsl_string(BIG_TEST), "\n\n\n")
-
-@bp_check(BIG_TEST == BIG_TEST_ANSWER, test_compare(BIG_TEST, BIG_TEST_ANSWER))
+@bp_check(BIG_TEST == BIG_TEST_ANSWER,
+          test_compare(BIG_TEST, BIG_TEST_ANSWER),
+          "TEST FAILURE! Detailed comparison printout is above this line")
 
 const BIG_TEST_2 = MJ.parse_markovjunior(MJ.dsl_string(BIG_TEST))
-@bp_check(BIG_TEST_2 == BIG_TEST_ANSWER, test_compare(BIG_TEST_2, BIG_TEST_ANSWER))
+@bp_check(BIG_TEST_2 == BIG_TEST_ANSWER,
+          test_compare(BIG_TEST_2, BIG_TEST_ANSWER),
+          "TEST FAILURE! Detailed comparison printout is above this line")
+# Do a sanity-check:
+@bp_check(BIG_TEST == BIG_TEST_2,
+          test_compare(BIG_TEST, BIG_TEST_2),
+          "TEST FAILURE! Detailed comparison printout is above this line")

@@ -1,7 +1,7 @@
 #######################
 #  Logging
 
-"Redefine this to return `true` to enable detailed logging"
+"Enable detailed algorithm logging by redefining this to return `true`"
 log_logic() = false
 
 LOG_LOGIC_TAB::String = ""
@@ -165,6 +165,7 @@ function markov_algo_start(algo::MarkovAlgorithm,
     return state
 end
 
+"May not run all requested iterations, due to the algorithm completing"
 function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_iterations::Integer = 1)
     # Internal behavior: if n_iterations is negative, run all the way to the end.
     if n_iterations < 0

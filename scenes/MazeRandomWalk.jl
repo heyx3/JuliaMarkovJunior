@@ -1,13 +1,10 @@
 @markovjunior 'b' begin
-    # Pick a source pixel
-    @do_n 1 begin
-        @rule "b" => "R"
-    end
-    # Do a backtracking random walk to carve out maze paths
-    @do_all begin
-        @sequential
-        @rule "Rbb" => "GGR"
-        @rule "GGR" => "Rww"
-        @rule "R" => "w"
-    end
+    # Pick a source pixel.
+    @rewrite (area/500) b => R
+
+    # Do a backtracking random walk to carve out maze paths.
+    #TODO: Nest in a repeating sequence
+    @rewrite Rbb => GGR
+    @rewrite GGR => Rww
+    @rewrite R => w
 end
