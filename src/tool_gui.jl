@@ -157,7 +157,7 @@ function update_gui_runner_scenes!(runner::GuiRunner)
              "w")
         runner.current_scene_has_changes = false
 
-        runner.initial_error_msg = string(
+        runner.algorithm_error_msg = string(
             "Scene '", runner.memory.current_scene_file_name, "' wasn't found, ",
               "so it was recreated on-disk from this editor"
         )
@@ -634,13 +634,14 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
             max=v2f(0.65, 1.0)
         )
     )
-    gui_window("Files", C_NULL, pane_flags) do
+    gui_window("Scenes", C_NULL, pane_flags) do
+        CImGui.Separator(); CImGui.SameLine(30); CImGui.Text("Scenes")
+        CImGui.Dummy(40, 1);
+
         BUTTON_SIZE = v2f(100, 35)
-        CImGui.Separator(); CImGui.SameLine(30); CImGui.Text("Files")
         if CImGui.Button("Refresh", BUTTON_SIZE)
             update_gui_runner_scenes!(runner)
         end
-        CImGui.SameLine(0, 20)
         gui_with_style(CImGui.LibCImGui.ImGuiCol_Button, v3f(0.2, 0.1, 0.1), unchanged=runner.current_scene_has_changes) do
          gui_with_style(CImGui.LibCImGui.ImGuiCol_ButtonHovered, v3f(0.2, 0.1, 0.1), unchanged=runner.current_scene_has_changes) do
           gui_with_style(CImGui.LibCImGui.ImGuiCol_ButtonActive, v3f(0.2, 0.1, 0.1), unchanged=runner.current_scene_has_changes) do
@@ -660,8 +661,12 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         end end end
 
         next_scene_idx_c = convert(Int32, runner.current_scene_idx - 1)
-        @c CImGui.ListBox("Scenes", &next_scene_idx_c,
-                          runner.available_scenes, length(runner.available_scenes))
+        n_available_lines = max(2, round(Int,
+            (CImGui.GetContentRegionAvail().y - 100) / CImGui.GetTextLineHeightWithSpacing()
+        ))
+        @c CImGui.ListBox("##Scenes", &next_scene_idx_c,
+                          runner.available_scenes, length(runner.available_scenes),
+                          n_available_lines)
         if (next_scene_idx_c+1 != runner.current_scene_idx) && !runner.current_scene_has_changes
             runner.current_scene_idx = next_scene_idx_c+1
             runner.memory.current_scene_file_name = runner.available_scenes[runner.current_scene_idx]
