@@ -72,6 +72,8 @@ function rule_matches(r::RewriteRule_Strip{NCells, TCells}, grid::CellGrid{NDims
     end)
 end
 
+#TODO: If no rules have a mask in a @rewrite op, don't generate a mask
+
 "
 Finds every match for a given rule that touches a given subset of the grid,
   excluding rule placements that start at cells which fail the given mask.
@@ -438,19 +440,15 @@ dsl_string_rewrite_dest(rule::RewriteRuleCell_List) = "[$(string(dsl_string.(rul
 dsl_string_rewrite_dest(rule::RewriteRuleCell_Wildcard) = "_"
 dsl_string_rewrite_dest(rule::RewriteRuleCell_Lookup) = "[$(rule.source_idx)]"
 
+dsl_string_rewrite_mask(mask::Nothing) = ""
+dsl_string_rewrite_mask(mask::Float32) = "%$mask"
+dsl_string_rewrite_mask(mask::NTuple{2, Float32}) = "%($(mask[1]):$(mask[2]))"
+
 dsl_string(@nospecialize strip::RewriteRule_Strip) = string(
     dsl_string_rewrite_source.(t[1] for t in strip.cells)...,
     " => ",
     dsl_string_rewrite_dest.(t[2] for t in strip.cells)...,
-    if isnothing(strip.mask)
-        ()
-    elseif strip.mask isa Float32
-        (" %", strip.mask)
-    elseif strip.mask isa NTuple{2, Float32}
-        (" %(", strip.mask[1], ":", strip.mask[2], ")")
-    else
-        error("Unhandled: ", typeof(strip.mask))
-    end...,
+    " $(dsl_string_rewrite_mask(strip.mask))",
     (isone(strip.weight) ? () : (" *", strip.weight))...,
     if isempty(strip.explicit_symmetries) && (strip.unlimited_symmetries_after_axis < 1)
         ()
@@ -520,7 +518,7 @@ function parse_markovjunior_rewrite_rule_side(inputs::MacroParserInputs, loc, ex
         else
             raise_error_at(loc, inputs,
                            "Unsupported color value '", c, "'! Supported are ",
-                           "[ ", iter_join(keys(CELL_CODE_BY_CHAR), ", "), " ]")
+                           "[ ", iter_join(keys(CELL_CODE_BY_CHAR), ", ")..., " ]")
         end
 
         # The complex sequence of pixel rules ultimately turns into a series of binary operators --
@@ -734,7 +732,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
         elseif isnothing(maskExpr)
             nothing
         else
-            raise_error_at(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; Got `%$maskExpr`")
+            raise_error_at(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; got `%$maskExpr`")
         end
         (symmetries_explicit, symmetries_infinite_start) = parse_markovjunior_rewrite_rule_symmetry(inputs, loc, symmetryExprs)
 
@@ -807,7 +805,7 @@ end
 function parse_markovjunior_op(::Val{Symbol("@rewrite")},
                                inputs::MacroParserInputs,
                                loc::Optional{LineNumberNode},
-                               expr_args)
+                               expr_args, original_line)
     args = Vector{Any}()
     parse_markovjunior_block(expr_args) do inner_loc, line
         push!(args, line)

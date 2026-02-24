@@ -31,7 +31,7 @@ For example `@markovjunior 'M' begin ... end` to start with Magenta.
 
 By default the grid can have any number of dimensions, but you can fix this with
   e.g. `@markovjunior 2 begin ... end`.
-There also can be expressions inside the macro (such as `@draw_box`) which imply a minimum number of dimensions;
+There also can be expressions inside the macro (such as `@fill`) which imply a minimum number of dimensions;
   if there are any dimensional mismatches then the macro throws an error.
 
 ## Main Sequence
@@ -57,8 +57,8 @@ For example:
         wRG__GRw => wwwwwwww # Slightly larger stomp
     end
     # Finally, place a "player start" square.
-    @draw_box B pixel(min=0, size=4)
-    @draw_box T pixel(min=0, size=1)
+    @fill B pixel(min=0, size=4)
+    @fill T pixel(min=0, size=1)
 end
 ````
 
@@ -485,10 +485,10 @@ You can limit the first two axes to only rotate between themselves by doing `^[ 
 You can limit the block axes `y`, `z`, and `w` to only rotate between three grid axes `x`, `y`, and `z`
   by doing `^[   (y, z, w)[ @rotations(x, y, z) ]     ]`.
 
-## `@draw_box`
+## `@fill`
 
 To make a deterministic modification to a grid, you can use
-  `@draw_box 'C' S(A=N, B=M) [rule] [mask]`.
+  `@fill 'C' S(A=N, B=M) [rule] [mask]`.
 
 This operation will fill a single color in every pixel of a box described by the given space.
 A rule can optionally filter which color pixels are affected.
@@ -511,11 +511,16 @@ You can still provide fractional values, in which case coordinates will be round
   * `center`
 * `X` and `Y` are the values for those parameters, either:
   * A single number, representing the value along all axes
-  * A vector like `(3, 20)`, *which also forces the entire grid to have at least that many dimensions*
+  * A vector like `(3, 20)`, *which also forces the entire grid to have at least that many dimensions*.
 * `[rule]` is an optional condition for which pixels are affected, using `+` to whitelist and `-` to blacklist.
 For example `-RGB` means to affect every pixel in the box except Red Green and Blue;
 `+RGB` means to affect *no* pixels in the box except Red Green and Blue.
 * `[mask]` is an optional mask statement which randomly forbids some of the pixels in the same way as for [rewrite rules](#), for example `%0.75` forbids 25% of all pixels.
+
+Note that a 1D vector like `(5, )` has different behavior than a scalar like `5`
+  when extrapolating to higher dimensions.
+The 1D vector lets every axis from 2 onward take up the entire grid,
+  while the scalar value is used for every axis.
 
 ## `@sequence`
 
@@ -525,7 +530,7 @@ Syntax is as follows:
 ````julia
 @sequence [threshold] begin
     # Chronological sequence of operations:
-    @draw_box 'R' uv(min=0, size=0.5)
+    @fill 'R' uv(min=0, size=0.5)
     @rewrite 1 R => G
     @rewrite RG => BB
 end [bias]

@@ -20,10 +20,11 @@ To define a new `AbstractMarkovOp` (like `@rewrite`), implement the following
 
 * `markov_op_initialize`
 * `markov_op_iterate`
-* `markov_op_cancel`
-* `markov_op_min_dimension` only if your op implies the grid must have a certain number of dimensions
-* `dsl_string`; note that ops are defined with macro call syntax
-* `parse_markovjunior_op`
+* `markov_op_cancel` if you have any resources/allocations to release;
+you may want to call this when your op finishes as well
+* `markov_op_min_dimension` if your op implies the grid must have a certain number of dimensions
+* `dsl_string`; note that ops are represented with macro call syntax
+* `parse_markovjunior_op` is the inverse of `dsl_string`
 
 ## Custom Biases
 
@@ -34,9 +35,9 @@ To define a new `AbstractMarkovBias`, implement the following
 * `markov_bias_update`
 * `markov_bias_cleanup`
 * `markov_bias_calculate`
-* `markov_bias_state_type`
-* `dsl_string`; note that biases are defined with function call syntax
-* `parse_markovjunior_bias`
+* `markov_bias_state_type` is important to provide type-stability
+* `dsl_string`; note that biases are represented with function call syntax
+* `parse_markovjunior_bias` is the inverse of `dsl_string`
 * `check_markovjunior_biases` if your new bias has rules
   that need to be validated after parsing (e.g. only one instance allowed)
 
@@ -53,7 +54,8 @@ module MarkovJunior
 using Random, Setfield, Profile, Printf
 const System = Base.Sys
 
-using OrderedCollections, StaticArrays, MacroTools, DataStructures
+using MacroTools, NamedTupleTools
+using OrderedCollections, StaticArrays, DataStructures
 using StructTypes, JSON3
 using GLFW, CImGui, CSyntax
 
@@ -73,6 +75,7 @@ include("algo.jl")
 include("dsl.jl")
 include("interface.jl")
 include("op_rewrite.jl")
+include("op_draw_box.jl")
 include("bias_temperatue.jl")
 include("new_runner.jl")
 export AbstractMarkovAllocator, AbstractMarkovBias, AbstractMarkovOp,

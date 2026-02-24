@@ -39,6 +39,11 @@ const BIG_TEST = @markovjunior 3 'R' begin
     end begin
         temperature(40.9)
     end
+
+    @fill 'R' uv(min=0, size=0.2)
+    @fill 'b' uv(size=1, center=0) %0.2
+    @fill 'w' uv(size=(0.1, 0.5), max=1) +R
+    @fill 'M' pixel(min=1, max=5) -wgb %(0.1:0.9)
 end
 const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
     MJ.CELL_CODE_BY_CHAR['R'],
@@ -335,6 +340,37 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             tuple(
                 MJ.MarkovBiasTemperature(40.9f0)
             )
+        ),
+
+        MJ.MarkovOpDrawBox(
+            MJ.CELL_CODE_BY_CHAR['R'],
+            MJ.DrawBoxSpace.uv,
+            true,
+            Box1Df(min=Vec(0), size=Vec(0.2)),
+            nothing, nothing
+        ),
+        MJ.MarkovOpDrawBox(
+            MJ.CELL_CODE_BY_CHAR['b'],
+            MJ.DrawBoxSpace.uv,
+            true,
+            Box1Di(size=Vec(1), center=Vec(0)),
+            nothing, 0.2f0
+        ),
+        MJ.MarkovOpDrawBox(
+            MJ.CELL_CODE_BY_CHAR['w'],
+            MJ.DrawBoxSpace.uv,
+            false,
+            Box2Df(size=Vec(0.1f0, 0.5f0), max=Vec(1.0f0, 1.0f0)),
+            (Val(:whitelist), MJ.CellTypeSet('R')),
+            nothing
+        ),
+        MJ.MarkovOpDrawBox(
+            MJ.CELL_CODE_BY_CHAR['M'],
+            MJ.DrawBoxSpace.pixel,
+            true,
+            Box1Di(min=Vec(1), max=Vec(5)),
+            (Val(:blacklist), MJ.CellTypeSet('w', 'g', 'b')),
+            (0.1f0, 0.9f0)
         )
     ]
 )
@@ -352,6 +388,18 @@ function test_compare(a::MJ.MarkovAlgorithm, b::MJ.MarkovAlgorithm)
     return nothing
 end
 test_compare(a::MJ.AbstractMarkovOp, b::MJ.AbstractMarkovOp) = println("\t\tMismatched/Unsupported types!")
+function test_compare(a::MJ.MarkovOpDrawBox, b::MJ.MarkovOpDrawBox)
+    for f in fieldnames(typeof(a))
+        af = getfield(a, f)
+        bf = getfield(b, f)
+        if af != bf
+            println("\t\tMismatch of ", f, "! A has ", af, " while B has ", bf)
+        end
+    end
+    if a != b
+        println("\t\tFails to match via == operator!")
+    end
+end
 function test_compare(a::MJ.MarkovOpRewrite1D, b::MJ.MarkovOpRewrite1D)
     if length(a.rules) != length(b.rules)
         println("\t\tA has ", length(a.rules), " rules while B has ", length(b.rules), "!")
@@ -434,3 +482,6 @@ const BIG_TEST_2 = MJ.parse_markovjunior(MJ.dsl_string(BIG_TEST))
 @bp_check(BIG_TEST == BIG_TEST_2,
           test_compare(BIG_TEST, BIG_TEST_2),
           "TEST FAILURE! Detailed comparison printout is above this line")
+
+
+println("\n\nTests passed!\n")

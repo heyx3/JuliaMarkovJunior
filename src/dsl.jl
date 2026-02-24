@@ -49,9 +49,10 @@ Parses a specific op (phrased in the DSL as a Julia macro expression),
 function parse_markovjunior_op(name_symbol_val,
                                macro_parser_inputs,
                                code_location,
-                               expr_args
+                               expr_args,
+                               original_expr
                               )::AbstractMarkovOp
-    error("Unimplemented: ", typeof.((name_symbol_val, macro_parser_inputs, code_location, expr_args)))
+    error("Unimplemented: ", typeof.((name_symbol_val, macro_parser_inputs, code_location, expr_args, original_expr)))
 end
 
 "
@@ -217,7 +218,7 @@ function parse_markovjunior_sequence(try_handle_line, inputs::MacroParserInputs,
             push!(output, parse_markovjunior_op(
                 Val(line.args[1]::Symbol), inputs,
                 line.args[2]::LineNumberNode,
-                line.args[3:end]
+                line.args[3:end], line
             ))
             pop!(inputs.op_stack_trace)
         else
