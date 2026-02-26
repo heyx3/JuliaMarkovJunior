@@ -55,6 +55,16 @@ struct MarkovAllocatorHeap <: AbstractMarkovAllocator end
 abstract type AbstractMarkovOp end
 abstract type AbstractMarkovBias end
 
+# Equality between ops and between biases is important for testing.
+# By default, we check their precise types and their individual fields with ==
+#   (by default Julia would use === on the fields).
+Base.:(==)(a::T, b::T) where {T<:Union{AbstractMarkovOp, AbstractMarkovBias}} =
+    (typeof(a) == typeof(b)) && all(
+        f -> getfield(a, f) == getfield(b, f),
+        fieldnames(typeof(a))
+    )
+#
+
 struct MarkovAlgorithm
     initial_fill::UInt8
 
@@ -84,13 +94,9 @@ Information about the algorithm state relevant to an Op.
 Inherits properties from `MarkovBiasContext`.
 "
 struct MarkovOpContext
-    inherited_biases_type_stable::Tuple{Vararg{<:AbstractMarkovBias}}
+    all_biases::Vector{AbstractMarkovBias} # Ops can read/add/remove from this as appropriate
     bias_context::MarkovBiasContext
 end
-MarkovOpContext(algo_state) = MarkovOpContext(  #NOTE: algo state can't be typed because it's defined below
-    markov_algo_flatten_biases(algo_state),
-    algo_state.bias_context
-)
 Base.propertynames(::MarkovOpContext) = propertynames(MarkovOpContext)
 Base.propertynames(::Type{MarkovOpContext}) = (
     propertynames(MarkovBiasContext)...,
@@ -102,6 +108,10 @@ else
     getproperty(getfield(c, :bias_context), n)
 end
 
+function Base.close(context::MarkovOpContext)
+    markov_allocator_release_array(context.allocator, context.all_biases)
+end
+
 "Inherits properties from `MarkovOpContext`, though they aren't directly settable"
 mutable struct MarkovAlgoState{N}
     grid::Base.RefValue{CellGridConcrete{N}} # Wrapped in a Ref for implementation reasons
@@ -110,9 +120,6 @@ mutable struct MarkovAlgoState{N}
     op_idx::Int
     op_state::Any
     op_context::MarkovOpContext # Inner sequences can modify this field
-
-    # Sequences can push new biases onto this stack, and they all go into any ops inside that stack.
-    bias_chain::Stack{Vector{AbstractMarkovBias}}
 
     rng::PRNG
 
@@ -148,20 +155,21 @@ function markov_algo_start(algo::MarkovAlgorithm,
     fill!(grid, algo.initial_fill)
 
     rng = (seeds isa Real) ? PRNG(seeds) : PRNG(seeds...)
-    bias_chain = Stack{Vector{AbstractMarkovBias}}()
 
     state = MarkovAlgoState(
         Ref(grid), 0,
         0, nothing,
-        MarkovOpContext((), MarkovBiasContext(allocator)),
-        bias_chain, rng,
+        MarkovOpContext(
+            let a = markov_allocator_acquire_array(allocator, tuple(16), AbstractMarkovBias)
+                empty!(a)
+                a
+            end,
+            MarkovBiasContext(allocator)
+        ),
+        rng,
         Ref{Optional{Int}}()
     )
-    logic_logln("Stated an algorithm run with seeds ", seeds,
-                "\n Running first step of the algorithm...")
-    logic_tab_in()
-    markov_algo_step(algo, state)
-    logic_tab_out()
+    logic_logln("Stated an algorithm run with seeds ", seeds)
     return state
 end
 
@@ -203,7 +211,6 @@ function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_itera
             state.op_idx += 1
             logic_tab_in()
             if state.op_idx <= length(algo.sequence)
-                state.op_context = MarkovOpContext(state)
                 state.op_state = markov_op_initialize(algo.sequence[state.op_idx], state.grid,
                                                       state.rng, state.op_context)
                 logic_logln(typeof(algo.sequence[state.op_idx]))
@@ -227,15 +234,17 @@ Releases all allocations of the MarkovAlgoState back to its allocator;
 function Base.close(s::MarkovAlgoState, owning_algo::MarkovAlgorithm)
     logic_logln("Closing algo for ", vsize(s.grid[]))
     logic_tab_in()
-    if !markov_algo_is_finished(owning_algo, s)
+    if !markov_algo_is_finished(owning_algo, s) && markov_algo_is_started(owning_algo, s)
         markov_op_cancel(owning_algo.sequence[s.op_idx], s.op_state, s.op_context)
     end
     markov_allocator_release_array(s.allocator, s.grid[])
+    markov_allocator_release_array(s.allocator, s.op_context.all_biases)
     logic_tab_out()
     return nothing
 end
 
 
+markov_algo_is_started(algo::MarkovAlgorithm, state::MarkovAlgoState) = (state.op_idx > 0)
 markov_algo_is_finished(algo::MarkovAlgorithm, state::MarkovAlgoState) = (state.op_idx > length(algo.sequence))
 
 "Operations can require a minimum number of dimensions for the grid"
@@ -243,13 +252,6 @@ markov_op_min_dimension(::AbstractMarkovOp)::Int = 1
 
 markov_algo_grid(s::MarkovAlgoState) = s.grid[]
 markov_algo_n_iterations(s::MarkovAlgoState) = s.n_iterations
-
-
-###############
-#  Implementation
-
-"Collects the current `bias_chain` into a type-stable tuple for ops to process"
-markov_algo_flatten_biases(mas::MarkovAlgoState) = Tuple(Iterators.flatten(mas.bias_chain))
 
 
 #################

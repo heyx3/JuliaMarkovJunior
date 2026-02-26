@@ -2,7 +2,10 @@ function markovjunior_run_tool()
     @game_loop begin
         INIT(
             v2i(1210, 800), "Markov Junior Playground",
-            vsync=VsyncModes.on
+            vsync=VsyncModes.on,
+            glfw_hints = Dict(
+                GLFW.FOCUSED => 1
+            )
         )
 
         SETUP = begin

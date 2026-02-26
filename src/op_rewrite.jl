@@ -237,11 +237,6 @@ struct MarkovOpRewrite1D{TRules <: Tuple{Vararg{RewriteRule_Strip}},
     threshold::Optional{Threshold}
     biases::TBias
 end
-Base.:(==)(a::MarkovOpRewrite1D{R, B}, b::MarkovOpRewrite1D{R, B}) where {R, B} = (
-    a.rules == b.rules &&
-    a.threshold == b.threshold &&
-    a.biases == b.biases
-)
 
 mutable struct MarkovOpRewrite1D_State{NDims, NRules, TGrid, TRules<:NTuple{NRules, RewriteRule_Strip},
                                        NBiases, TFullBias<:NTuple{NBiases, AbstractMarkovBias},
@@ -264,11 +259,10 @@ function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule_
     cache = RewriteCache(grid, mask_grid, r.rules,
                          map(ru -> pick_mask(ru, rng), r.rules),
                          context)
-    biases = (
-        context.inherited_biases_type_stable...,
-        r.biases...
-    )
-    TBiasStates = Tuple{map(markov_bias_state_type, typeof.(biases))...}
+
+    append!(context.all_biases, r.biases)
+    biases = Tuple(context.all_biases)
+    TBiasStates = Tuple{markov_bias_state_type.(typeof.(biases))...}
     bias_states::TBiasStates = map(b -> markov_bias_initialize(b, grid, rng, context.bias_context), biases)
 
     threshold = isnothing(r.threshold) ? nothing : get_threshold(r.threshold, grid, rng)
@@ -399,10 +393,17 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
             return convert(Int32, length(rule.cells))
         end)(r.rules[pick_rule_i])
 
-        # Update counters.
+        # Mark the affected area.
         pick_end_cell = grid_dir_pos_along(pick_dir, pick_start_cell, rule_len-1)
         (pick_start_cell, pick_end_cell) = minmax(pick_start_cell, pick_end_cell)
-        update_rewrite_cache!(state.rewrite_cache, Box(pick_start_cell:pick_end_cell))
+        affected_area = Box(pick_start_cell:pick_end_cell)
+        update_rewrite_cache!(state.rewrite_cache, affected_area)
+        # Update biases.
+        state.bias_states = markov_bias_update.(
+            state.biases, state.bias_states,
+            Ref(grid), Ref(affected_area), Ref(rng)
+        )
+        # Update counters.
         if exists(ticks_left[])
             ticks_left[] -= 1
         end
@@ -422,7 +423,7 @@ function markov_op_cancel(op::MarkovOpRewrite1D, s::MarkovOpRewrite1D_State,
                           context::MarkovOpContext)
     markov_allocator_release_array(context.allocator, s.rewrite_cache.mask_grid)
     markov_allocator_release_array(context.allocator, s.weighted_options_buffer)
-    foreach((b, s) -> markov_bias_cleanup(b, s), s.biases, s.bias_states)
+    foreach(markov_bias_cleanup, s.biases, s.bias_states)
     close_rewrite_cache(s.rewrite_cache, context)
 end
 
@@ -454,7 +455,7 @@ dsl_string(@nospecialize strip::RewriteRule_Strip) = string(
         ()
     else
         (
-            " ^[ ",
+            " \\[ ",
             # Explicit symmetries:
             Iterators.flatten(
                 iter_join(
@@ -705,15 +706,19 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
         weightDivScalar = nothing
         symmetryExprs = nothing
         maskExpr = nothing
-        @capture(b, (c_ * weightMulScalar_Real ^ [ symmetryExprs__ ])) ||
-            @capture(b, (c_ / weightDivScalar_Real ^ [ symmetryExprs__ ])) ||
-            @capture(b, (c_ ^ [ symmetryExprs__ ])) ||
-            @capture(b, (c_ * weightMulScalar_Real)) ||
-            @capture(b, (c_ / weightDivScalar_Real)) ||
+        @capture(    b, c_ % maskExpr_ * weightMulScalar_Real \[ symmetryExprs__ ]) ||
+            @capture(b, c_ % maskExpr_ / weightDivScalar_Real \[ symmetryExprs__ ]) ||
+            @capture(b, c_ % maskExpr_ \ [ symmetryExprs__ ]) ||
+            @capture(b, c_ % maskExpr_ * weightMulScalar_Real) ||
+            @capture(b, c_ % maskExpr_ / weightDivScalar_Real) ||
+            @capture(b, c_ * weightMulScalar_Real \[ symmetryExprs__ ]) ||
+            @capture(b, c_ / weightDivScalar_Real \[ symmetryExprs__ ]) ||
+            @capture(b, c_ \[ symmetryExprs__ ]) ||
+            @capture(b, c_ * weightMulScalar_Real) ||
+            @capture(b, c_ / weightDivScalar_Real) ||
+            @capture(b, c_ % maskExpr_) ||
             (c = b)
-        @capture(c, (d_ % maskExpr_)) ||
-            (d = c)
-        rhsExpr = d
+        rhsExpr = c
 
         # Parse the modifiers.
         weight = convert(Float32, if exists(weightMulScalar)
@@ -812,12 +817,13 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
     end
 
     if length(args) == 3
-        parse_markovjunior_bias_statement(inputs, loc, args[3])
-        return MarkovOpRewrite1D(
-            parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2]),
-            parse_markovjunior_threshold(inputs, loc, args[1]),
-            Tuple(top(inputs.bias_stack))
-        )
+        with_parsed_markovjunior_bias_statement(inputs, loc, args[3]) do biases
+            return MarkovOpRewrite1D(
+                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2]),
+                parse_markovjunior_threshold(inputs, loc, args[1]),
+                Tuple(biases)
+            )
+        end
     elseif length(args) == 2
         if check_markovjunior_threshold_appearance(args[1])
             return MarkovOpRewrite1D(
@@ -826,12 +832,13 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
                 ()
             )
         else
-            parse_markovjunior_bias_statement(inputs, loc, args[2])
-            return MarkovOpRewrite1D(
-                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1]),
-                nothing,
-                Tuple(top(inputs.bias_stack))
-            )
+            with_parsed_markovjunior_bias_statement(inputs, loc, args[2]) do biases
+                return MarkovOpRewrite1D(
+                    parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1]),
+                    nothing,
+                    Tuple(biases)
+                )
+            end
         end
     elseif length(args) == 1
         return MarkovOpRewrite1D(

@@ -196,6 +196,15 @@ function raise_error_at(src::Optional{LineNumberNode}, state::MacroParserInputs,
     end
 end
 
+function with_parser_stacktrace(to_do, inputs::MacroParserInputs, new_stack_entry)
+    push!(inputs.op_stack_trace, new_stack_entry)
+    try
+        return to_do()
+    finally
+        pop!(inputs.op_stack_trace)
+    end
+end
+
 "
 Processes each of the given lines, tracking the most recent LineNumberNode.
 
@@ -234,9 +243,14 @@ end
 
 "
 Processes a bias statement/block-of-statements,
-  pushing them onto the end of `inputs.bias_stack` and validating the result.
+  pushing them onto the end of `inputs.bias_stack` and validating the result
+  before returning it.
+
+Make sure to pop this off the stack once you're done parsing your op!
+
+It's recommended to use `with_parsed_markovjunior_bias_statement` instead.
 "
-function parse_markovjunior_bias_statement(inputs::MacroParserInputs, location, biases)
+function push_parsed_markovjunior_bias_statement(inputs::MacroParserInputs, location, biases)
     # Define how to process each statement.
     output = Vector{AbstractMarkovBias}()
     function process_line(location, line)
@@ -257,7 +271,7 @@ function parse_markovjunior_bias_statement(inputs::MacroParserInputs, location, 
     if @capture biases f_Symbol(args__)
         process_line(location, biases)
     elseif Base.isexpr(biases, :block)
-        parse_markovjunior_block(process_line, biases)
+        parse_markovjunior_block(process_line, biases.args)
     else
         raise_error_at(location, inputs,
                        "Unexpected expression where bias was expected: ", biases)
@@ -268,6 +282,26 @@ function parse_markovjunior_bias_statement(inputs::MacroParserInputs, location, 
         push!(inputs.bias_stack, output)
         for T in unique(typeof.(Iterators.flatten(inputs.bias_stack)))
             check_markovjunior_biases(T, inputs)
+        end
+    end
+
+    return output
+end
+
+"
+Parses the given group of biases, pushes them onto the stack,
+  passes the new group into your lambda, then pops them off the stack again.
+
+You should use this when parsing ops that define a `bias` section.
+"
+function with_parsed_markovjunior_bias_statement(to_do, inputs::MacroParserInputs,
+                                                 location, expr)
+    biases = push_parsed_markovjunior_bias_statement(inputs, location, expr)
+    try
+        return to_do(biases)
+    finally
+        if !isempty(biases)
+            pop!(inputs.bias_stack)
         end
     end
 end

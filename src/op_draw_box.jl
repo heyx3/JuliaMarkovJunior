@@ -54,16 +54,17 @@ function get_draw_box_pixels(space::E_DrawBoxSpace,
                 size = convert(Vec{N, Int32}, size(box) * resolution)
             ), resolution, box_is_1D_scalar)
         elseif space == DrawBoxSpace.pixel
+            mi = min_inclusive(box)
+            ma = max_inclusive(box)
+            V = Vec{N, Int32}
             if R == Int32
-                return box
+                b_min = convert(V, clamp(mi, one(V), resolution))
+                b_max = convert(V, max(b_min, clamp(ma, one(V), resolution)))
+                return Box(min=b_min, max=b_max)
             elseif R == Float32
-                mi = min_inclusive(box)
-                ma = max_inclusive(box)
-                V = Vec{N, Int32}
-                return Box(
-                    min=clamp(floor(V, mi), one(V), resolution),
-                    max=clamp(ceil(V, ma), one(V), resolution)
-                )
+                b_min = convert(V, clamp(floor(V, mi), one(V), resolution))
+                b_max = convert(V, max(b_min, clamp(ceil(V, ma), one(V), resolution)))
+                return Box(min=b_min, max=b_max)
             else
                 error("Unhandled: ", R)
             end
@@ -95,10 +96,6 @@ struct MarkovOpDrawBox{N, TRule<:DrawBoxRule} <: AbstractMarkovOp
     rule::TRule
     mask::Union{Nothing, Float32, NTuple{2, Float32}}
 end
-Base.:(==)(a::MarkovOpDrawBox{N, R}, b::MarkovOpDrawBox{N, R}) where {N, R} = all(
-    f -> getfield(a, f) == getfield(b, f),
-    fieldnames(typeof(a))
-)
 
 struct MarkovOpDrawBox_State{N, TMask<:Optional{MaskGrid{N}}}
     pixels::Bplus.Math.VecRange{N, Int32}
@@ -165,6 +162,7 @@ function markov_op_iterate(b::MarkovOpDrawBox{NBox, TRule},
     #    do a quick fill of the rest.
     if isnothing(ticks_left[]) && (state.next_pixel.x == first(state.pixels).x)
         foreach(apply_at, state.next_pixel:last(state.pixels))
+        markov_op_cancel(b, state, context)
         return nothing
     # Otherwise apply to the next pixel and try to advance.
     else
@@ -175,6 +173,7 @@ function markov_op_iterate(b::MarkovOpDrawBox{NBox, TRule},
 
         try_iterate = iterate(state.pixels, state.next_pixel)
         return if isnothing(try_iterate)
+            markov_op_cancel(b, state, context)
             nothing
         else
             @markovjunior_assert(try_iterate[1] == try_iterate[2],

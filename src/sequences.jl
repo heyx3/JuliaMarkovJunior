@@ -440,7 +440,7 @@ function broadcast_sequence(seq::Sequence_DrawBox{N}, new_dims::Int) where {N}
     end
 end
 dsl_string(b::Sequence_DrawBox{N}) where {N} = string(
-    "@draw_box('", dsl_string(b.output_type), "', ",
+    "@fill('", dsl_string(b.output_type), "', ",
     "min=", min_inclusive(b.area).data, ", ",
     "size=", size(b.area).data,
     ")"

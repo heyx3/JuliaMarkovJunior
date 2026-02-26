@@ -20,6 +20,7 @@ const BIG_TEST = @markovjunior 3 'R' begin
     @rewrite (area*2) _ => R
     @rewrite RGB => [2]_[1]
 
+    # Next op is 7
     @rewrite (1.5*area)    R[Gw]B  => b[MR]{wgb}
     @rewrite (length/2.0)  ___     => [1][3][2]  *2
     @rewrite (length*3.0)  [Rw][G] => {wgb}[M]   /1.5
@@ -28,22 +29,37 @@ const BIG_TEST = @markovjunior 3 'R' begin
     @rewrite (2:10)        R=>G  %0.2  *3.5
     @rewrite               R=>G  %0.3  /4.1
 
-    @rewrite ((area*4.2):(0.5*length)) RM=>GT  ^[ x ]
-    @rewrite (8:(area/4.2))            RM=>GT  ^[ +1 ]
+    # Next op is 13
+    @rewrite ((area*4.2):(0.5*length)) RM=>GT  \[ x ]
+    @rewrite (8:(area/4.2))            RM=>GT  \[ +1 ]
     @rewrite                           RM=>GT                   temperature(0.2)
-    @rewrite                           RM=>GT  ^[ x, -2, 4... ] temperature(0.1)
+    @rewrite                           RM=>GT  \[ x, -2, 4... ] temperature(0.1)
 
     @rewrite begin
         R => G
-        R_[Bb]w => [2]_[bB]{wbR}  %(0.4:0.6)  *0.2   ^[z...]
+        R_[Bb]w => [2]_[bB]{wbR}  %(0.4:0.6)  *0.2   \[z...]
     end begin
         temperature(40.9)
     end
 
+    # Next op is 18
     @fill 'R' uv(min=0, size=0.2)
     @fill 'b' uv(size=1, center=0) %0.2
     @fill 'w' uv(size=(0.1, 0.5), max=1) +R
     @fill 'M' pixel(min=1, max=5) -wgb %(0.1:0.9)
+
+    # Next op is 22
+    @sequence @rewrite(10, R=>b)
+    @sequence (area/2) @rewrite(10, R=>R) begin
+        temperature(11.2)
+    end
+    @sequence begin
+        @rewrite R => G
+        @rewrite begin
+            G => B
+            G => Y *2
+        end temperature(0.4)
+    end temperature(0.9)
 end
 const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
     MJ.CELL_CODE_BY_CHAR['R'],
@@ -371,101 +387,219 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             Box1Di(min=Vec(1), max=Vec(5)),
             (Val(:blacklist), MJ.CellTypeSet('w', 'g', 'b')),
             (0.1f0, 0.9f0)
+        ),
+
+        MJ.MarkovOpSequence(
+            MJ.AbstractMarkovOp[
+                MJ.MarkovOpRewrite1D(
+                    tuple(
+                        MJ.RewriteRule_Strip(
+                            tuple(
+                                (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['b'])
+                            ),
+                            nothing, 1.0f0,
+                            MJ.GridDir[ ], 0
+                        )
+                    ),
+                    10,
+                    ()
+                )
+            ],
+            nothing,
+            MJ.AbstractMarkovBias[
+
+            ]
+        ),
+        MJ.MarkovOpSequence(
+            MJ.AbstractMarkovOp[
+                MJ.MarkovOpRewrite1D(
+                    tuple(
+                        MJ.RewriteRule_Strip(
+                            tuple(
+                                (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['R'])
+                            ),
+                            nothing, 1.0f0,
+                            MJ.GridDir[ ], 0
+                        )
+                    ),
+                    10,
+                    ()
+                )
+            ],
+            MJ.ThresholdByArea(0.5f0),
+            MJ.AbstractMarkovBias[
+                MJ.MarkovBiasTemperature(convert(Float32, 11.2))
+            ]
+        ),
+        MJ.MarkovOpSequence(
+            MJ.AbstractMarkovOp[
+                MJ.MarkovOpRewrite1D(
+                    tuple(
+                        MJ.RewriteRule_Strip(
+                            tuple(
+                                (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
+                            ),
+                            nothing, 1.0f0,
+                            MJ.GridDir[ ], 0
+                        )
+                    ),
+                    nothing,
+                    ()
+                ),
+                MJ.MarkovOpRewrite1D(
+                    tuple(
+                        MJ.RewriteRule_Strip(
+                            tuple(
+                                (MJ.CELL_CODE_BY_CHAR['G'], MJ.CELL_CODE_BY_CHAR['B'])
+                            ),
+                            nothing, 1.0f0,
+                            MJ.GridDir[ ], 0
+                        ),
+                        MJ.RewriteRule_Strip(
+                            tuple(
+                                (MJ.CELL_CODE_BY_CHAR['G'], MJ.CELL_CODE_BY_CHAR['Y'])
+                            ),
+                            nothing, 2.0f0,
+                            MJ.GridDir[ ], 0
+                        )
+                    ),
+                    nothing,
+                    tuple(
+                        MJ.MarkovBiasTemperature(convert(Float32, 0.4))
+                    )
+                )
+            ],
+            nothing,
+            MJ.AbstractMarkovBias[
+                MJ.MarkovBiasTemperature(0.9f0)
+            ]
         )
     ]
 )
 
-function test_compare(a::MJ.MarkovAlgorithm, b::MJ.MarkovAlgorithm)
+function test_compare(a::MJ.MarkovAlgorithm, b::MJ.MarkovAlgorithm, tab::String = "")
     println("Comparing two algorithms...")
     if length(a.sequence) != length(b.sequence)
-        println("\tA has ", length(a.sequence), " elements while B has ", length(b.sequence), "!")
+        println(tab, "\tA has ", length(a.sequence), " elements while B has ", length(b.sequence), "!")
     else
         for (oa, ob, i) in zip(a.sequence, b.sequence, 1:length(a.sequence))
-            println("\tOp ", i, ", ", typeof(oa), "(", typeof(ob), ")...")
-            test_compare(oa, ob)
+            println(tab, "\tOp ", i, ", ", typeof(oa), "(", typeof(ob), ")...")
+            test_compare(oa, ob, "$tab\t\t")
         end
     end
     return nothing
 end
-test_compare(a::MJ.AbstractMarkovOp, b::MJ.AbstractMarkovOp) = println("\t\tMismatched/Unsupported types!")
-function test_compare(a::MJ.MarkovOpDrawBox, b::MJ.MarkovOpDrawBox)
+test_compare(a::MJ.AbstractMarkovOp, b::MJ.AbstractMarkovOp, tab::String) = println(tab, "Mismatched/Unsupported types!")
+function test_compare(a::MJ.MarkovOpSequence, b::MJ.MarkovOpSequence, tab::String)
+    if a.threshold != b.threshold
+        println(tab, "Mismatch of thresholds! A has ", a.threshold, " while B has ", b.thresold)
+    end
+    if length(a.ops) != length(b.ops)
+        println(tab, "A has ", length(a.ops), " inner ops, but B has ", length(b.ops), "!")
+    else
+        for (oa, ob, i) in zip(a.ops, b.ops, 1:length(a.ops))
+            println(tab, "Op ", i, ", ", MJ.dsl_string(oa), "   (", MJ.dsl_string(ob), ")")
+            test_compare(oa, ob, "$tab\t")
+        end
+        if a.ops != b.ops
+            println(tab, "Op list Mismatch!")
+        end
+    end
+    if length(a.biases) != length(b.biases)
+        println(tab, "A has ", length(a.biases), " biases, but B has ", length(b.biases), "!")
+    else
+        for (ba, bb, i) in zip(a.biases, b.biases, 1:length(a.biases))
+            println(tab, "Bias ", i, ", ", MJ.dsl_string(ba), "   (", MJ.dsl_string(bb), ")")
+            if ba != bb
+                println(tab, "\tMismatch!")
+            end
+        end
+        if a.biases != b.biases
+            println(tab, "Bias list Mismatch!")
+        end
+    end
+    if a != b
+        println(tab, "Fails to match via == operator!")
+    end
+end
+function test_compare(a::MJ.MarkovOpDrawBox, b::MJ.MarkovOpDrawBox, tab::String)
     for f in fieldnames(typeof(a))
         af = getfield(a, f)
         bf = getfield(b, f)
         if af != bf
-            println("\t\tMismatch of ", f, "! A has ", af, " while B has ", bf)
+            println(tab, "Mismatch of ", f, "! A has ", af, " while B has ", bf)
         end
     end
     if a != b
-        println("\t\tFails to match via == operator!")
+        println(tab, "Fails to match via == operator!")
     end
 end
-function test_compare(a::MJ.MarkovOpRewrite1D, b::MJ.MarkovOpRewrite1D)
+function test_compare(a::MJ.MarkovOpRewrite1D, b::MJ.MarkovOpRewrite1D, tab::String)
     if length(a.rules) != length(b.rules)
-        println("\t\tA has ", length(a.rules), " rules while B has ", length(b.rules), "!")
+        println(tab, "A has ", length(a.rules), " rules while B has ", length(b.rules), "!")
     else
         for (ra, rb, i) in zip(a.rules, b.rules, 1:length(a.rules))
-            println("\t\tRule ", i, ", ", MJ.dsl_string(ra), "    (", MJ.dsl_string(rb), ")")
+            println(tab, "Rule ", i, ", ", MJ.dsl_string(ra), "    (", MJ.dsl_string(rb), ")")
             if length(ra.cells) != length(rb.cells)
-                println("\t\t\tA has ", length(ra.cells), " cells, while B has ", length(rb.cells), "!")
+                println(tab, "\tA has ", length(ra.cells), " cells, while B has ", length(rb.cells), "!")
             else
                 for (ca, cb, j) in zip(ra.cells, rb.cells, 1:length(ra.cells))
-                    println("\t\t\tCell ", j, ", ", ca, "   (", cb, ")")
+                    println(tab, "\tCell ", j, ", ", ca, "   (", cb, ")")
                     if ca != cb
-                        println("\t\t\t\tMismatch!")
+                        println(tab, "\t\tMismatch!")
                     end
                 end
             end
             if ra.weight != rb.weight
-                println("\t\t\tWeight mismatch! ", ra.weight, " vs ", rb.weight)
+                println(tab, "\tWeight mismatch! ", ra.weight, " vs ", rb.weight)
             end
             if ra.mask != rb.mask
-                println("\t\t\tMask mismatch! ",
+                println(tab, "\tMask mismatch! ",
                         typeof(ra.mask), "(", ra.mask, ") vs ",
                         typeof(rb.mask), "(", rb.mask, ")")
             end
             if length(ra.explicit_symmetries) != length(rb.explicit_symmetries)
-                println("\t\t\tA has ", length(ra.explicit_symmetries), " explicit symmetries ",
+                println(tab, "\tA has ", length(ra.explicit_symmetries), " explicit symmetries ",
                          "while B has ", length(rb.explicit_symmetries))
             else
                 for (sa, sb, j) in zip(ra.explicit_symmetries, rb.explicit_symmetries, 1:length(ra.explicit_symmetries))
-                    println("\t\t\tExplicit symmetry ", sa, "  (", sb, ")...")
+                    println(tab, "\tExplicit symmetry ", sa, "  (", sb, ")...")
                     if sa != sb
-                        println("\t\t\t\tMismatch!")
+                        println(tab, "\t\tMismatch!")
                     end
                 end
             end
             if ra.unlimited_symmetries_after_axis != rb.unlimited_symmetries_after_axis
-                println("\t\t\tInfinite-symmetry mismatch! ",
+                println(tab, "\tInfinite-symmetry mismatch! ",
                             ra.unlimited_symmetries_after_axis,
                             " vs ", rb.unlimited_symmetries_after_axis)
             end
 
             if ra != rb
-                println("\t\t\tFails to match via == operator!")
+                println(tab, "\tFails to match via == operator!")
             end
         end
     end
     if a.threshold != b.threshold
-        println("\t\t\tThreshold mismatch! ",
+        println(tab, "\tThreshold mismatch! ",
                 typeof(a.threshold), "(", a.threshold, ") vs ",
                 typeof(b.threshold), "(", b.threshold, ")")
     end
     if length(a.biases) != length(b.biases)
-        println("\t\tA has ", length(a.biases), " biases, but B has ", length(b.biases), "!")
+        println(tab, "A has ", length(a.biases), " biases, but B has ", length(b.biases), "!")
     else
         for (ba, bb, i) in zip(a.biases, b.biases, 1:length(a.biases))
-            println("\t\tBias ", i, ", ", MJ.dsl_string(ba), "   (", MJ.dsl_string(bb), ")")
+            println(tab, "Bias ", i, ", ", MJ.dsl_string(ba), "   (", MJ.dsl_string(bb), ")")
             if ba != bb
-                println("\t\t\tMismatch!")
+                println(tab, "\tMismatch!")
             end
         end
         if a.biases != b.biases
-            println("\t\tBias tuple Mismatch!")
+            println(tab, "Bias tuple Mismatch!")
         end
     end
     if a != b
-        println("\t\tFails to match via == operator!")
+        println(tab, "Fails to match via == operator!")
     end
     return nothing
 end
