@@ -50,8 +50,8 @@ function get_draw_box_pixels(space::E_DrawBoxSpace,
     else
         if space == DrawBoxSpace.uv
             return get_draw_box_pixels(DrawBoxSpace.pixel, Box(
-                min = convert(Vec{N, Int32}, min_inclusive(box) * resolution),
-                size = convert(Vec{N, Int32}, size(box) * resolution)
+                min = min_inclusive(box) * resolution,
+                size = size(box) * resolution
             ), resolution, box_is_1D_scalar)
         elseif space == DrawBoxSpace.pixel
             mi = min_inclusive(box)

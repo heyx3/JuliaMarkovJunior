@@ -79,6 +79,10 @@ We'll go into detail on everything, but here is a quick cheat sheet of **all** t
     # Rules go here.
     # If you only have one, you don't need to wrap it in this `begin end` block!
 
+    # You may set a Priority before providing any rules.
+    # These have higher precedence than anything else, including biases and weights.
+    PRIORITIZE(earliest)
+
     R => b        # Basic rule
     R => G   * 2  # Twice as likely as other rules
     R => G  %0.75 # Forbidden in exactly 25% of grid pixels, randomly chosen when the @rewrite starts.
@@ -205,7 +209,44 @@ end
 
 By default they all have an equal chance of being selected
   (weighted by count, meaning if there's twice as many candidates for the second rule then it's twice as likely to be chosen).
-To change this, see [Bias and weights](#bias-and-weights) below.
+To change this, see [Priority](#priorities) and [Bias and weights](#bias-and-weights) below.
+
+### Priority
+
+In a block with multiple rules, you can change which rules are considered first.
+This is called the Priority, and it has higher precedence than other things which influence rules
+  (e.g. biases and weights).
+In fact, weights are completely ignored under certain Priorities!
+
+To select a Priority `x`, add it to the beginning of the rules block with `PRIORITIZE(x)`.
+Priorities may have extra arguments, e.g. `PRIORITIZE(x, 1, "hello")`,
+  but none of the built-in ones actually use this feature.
+
+* `PRIORITIZE(everything)` : **The default priority**.
+Each potential rule application has the same chance of being selected,
+   at least before weights and biases are applied.
+So if rule A has 100 possible applications and rule B has only one,
+  then rule A is 100x more likely to be chosen than B.
+If rule B has `*2` weighting, then A drops to 50x more likely.
+* `PRIORITIZE(fair)` : Every rule has the same chance of being picked,
+  at least before weights and biases are applied.
+This means that a rule with 200 possible applications and one with 2 possible applications
+  would have the same odds of being chosen.
+* `PRIORITIZE(earliest)` : Always choose the first rule that has at least one possible application.
+Rule weights are ignored under this Priority.
+* `PRIORITIZE(latest)` : Opposite of `earliest`, always choose the last rule that has at least one possible application.
+Rule weights are ignored under this Priority.
+* `PRIORITIZE(common)` : Always choose the rule with the most potential applications.
+The counts for each rule are scaled by that rule's weight.
+This is similar to the default `everything` behavior, except it *always* chooses the most popular rule.
+* `PRIORITIZE(rare)` : Always choose the rule with the fewest potential applications.
+The counts for each rule are scaled by that rule's weight.
+
+To define your own priorities, define a new `AbstractMarkovRewitePriority`
+  and implement the interface described in its doc-string.
+Custom priorities can take extra arguments with the syntax `PRIORITIZE(my_priority, ...)`.
+They can also force the rewrite op to end immediately,
+  by rule an invalid rule index or a rule that doesn't match anywhere.
 
 ### Threshold
 

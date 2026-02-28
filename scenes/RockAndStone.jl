@@ -1,36 +1,31 @@
 @markovjunior 'I' begin
 	# Place cave seeds.
-    @do_n 3 begin
-        @rule I => R
-    end
+	@draw_box 'R' uv(min=0.1, size=0)
+	@draw_box 'R' uv(min=0.5, size=0)
+	@draw_box 'R' uv(min=0.9, size=0)
+
 	# Grow the cave seeds and leave some veins behind.
-    @do_n 6000 begin
-        @rule Rb => bR
-		@rule RI => bR
-		@rule IRb => GRb
+    @rewrite (area*6) begin
+        R[bI] => bR
+		IRb => G__
     end
 
 	# Clean up the veins.
-    @do_all begin
-		@sequential
-        @rule R => b
-		@rule GG => SS
-		@rule G => b
+	@rewrite begin
+		PRIORITIZE(earliest)
+		R => b
+		GG => SS
+		G => b
     end
 
 	# Turn the veins into real minerals.
-	@block repeat begin
+	@sequence repeat begin
 		# Mark a vein as either Gold or Nitra.
-		@do_n 1 begin
-			@rule S => Y
-			@rule S => R
-		end
+		@rewrite  1   S => {YR}
 		# Flesh out that vein.
-		@do_all begin
-			@rule YS => YY
-			@rule RS => RR
-			@rule RS => RR
-			@rule RS => RR
+		@rewrite begin
+			YS => YY
+			RS => RR  *3
 		end
 	end
 end

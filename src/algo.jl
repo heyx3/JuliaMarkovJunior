@@ -5,8 +5,8 @@
 log_logic() = false
 
 LOG_LOGIC_TAB::String = ""
-@inline logic_tab_in() = log_logic() && (global LOG_LOGIC_TAB *= "  ")
-@inline logic_tab_out() = log_logic() && (global LOG_LOGIC_TAB = LOG_LOGIC_TAB[2:end])
+@inline logic_tab_in() = log_logic() && (global LOG_LOGIC_TAB *= "    ")
+@inline logic_tab_out() = log_logic() && (global LOG_LOGIC_TAB = LOG_LOGIC_TAB[5:end])
 
 @inline logic_log(args...) = if log_logic()
     foreach(args) do arg
@@ -169,7 +169,7 @@ function markov_algo_start(algo::MarkovAlgorithm,
         rng,
         Ref{Optional{Int}}()
     )
-    logic_logln("Stated an algorithm run with seeds ", seeds)
+    logic_logln("Started an algorithm run with seeds ", seeds)
     return state
 end
 
@@ -211,9 +211,9 @@ function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_itera
             state.op_idx += 1
             logic_tab_in()
             if state.op_idx <= length(algo.sequence)
+                logic_logln(typeof(algo.sequence[state.op_idx]))
                 state.op_state = markov_op_initialize(algo.sequence[state.op_idx], state.grid,
                                                       state.rng, state.op_context)
-                logic_logln(typeof(algo.sequence[state.op_idx]))
                 logic_logln("Initial state:\n  ", state.op_state)
             else
                 logic_logln("No more ops left. This algo run is about to end")

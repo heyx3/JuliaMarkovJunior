@@ -9,6 +9,9 @@ MJ.markovjunior_asserts_enabled() = true
 
 using Bplus; @using_bplus
 
+
+const DEFAULT_PRIORITY = MJ.MarkovRewritePriority_Everything()
+
 const BIG_TEST = @markovjunior 3 'R' begin
     @pragma Hi 1 3 22
     @pragma hello
@@ -36,6 +39,7 @@ const BIG_TEST = @markovjunior 3 'R' begin
     @rewrite                           RM=>GT  \[ x, -2, 4... ] temperature(0.1)
 
     @rewrite begin
+        PRIORITIZE(rare)
         R => G
         R_[Bb]w => [2]_[bB]{wbR}  %(0.4:0.6)  *0.2   \[z...]
     end begin
@@ -56,6 +60,7 @@ const BIG_TEST = @markovjunior 3 'R' begin
     @sequence begin
         @rewrite R => G
         @rewrite begin
+            PRIORITIZE(earliest)
             G => B
             G => Y *2
         end temperature(0.4)
@@ -72,6 +77,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
 
     [
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -85,6 +91,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -100,6 +107,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -113,6 +121,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -126,6 +135,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -139,6 +149,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -155,6 +166,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         ),
 
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -179,6 +191,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -194,6 +207,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -217,6 +231,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         ),
 
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -230,6 +245,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -243,6 +259,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -257,6 +274,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         ),
 
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -274,6 +292,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -291,6 +310,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -307,6 +327,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             )
         ),
         MJ.MarkovOpRewrite1D(
+            DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -324,6 +345,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         ),
 
         MJ.MarkovOpRewrite1D(
+            MJ.MarkovRewritePriority_Rare(),
             tuple(
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -392,6 +414,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         MJ.MarkovOpSequence(
             MJ.AbstractMarkovOp[
                 MJ.MarkovOpRewrite1D(
+                    DEFAULT_PRIORITY,
                     tuple(
                         MJ.RewriteRule_Strip(
                             tuple(
@@ -413,6 +436,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         MJ.MarkovOpSequence(
             MJ.AbstractMarkovOp[
                 MJ.MarkovOpRewrite1D(
+                    DEFAULT_PRIORITY,
                     tuple(
                         MJ.RewriteRule_Strip(
                             tuple(
@@ -434,6 +458,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         MJ.MarkovOpSequence(
             MJ.AbstractMarkovOp[
                 MJ.MarkovOpRewrite1D(
+                    DEFAULT_PRIORITY,
                     tuple(
                         MJ.RewriteRule_Strip(
                             tuple(
@@ -447,6 +472,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                     ()
                 ),
                 MJ.MarkovOpRewrite1D(
+                    MJ.MarkovRewritePriority_Earliest(),
                     tuple(
                         MJ.RewriteRule_Strip(
                             tuple(

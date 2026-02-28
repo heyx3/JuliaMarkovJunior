@@ -4,16 +4,16 @@
 
 	# Randomly carve outward, and
 	#    randomly carve outward with partial (Slate) rock.
-    @rewrite area*5 begin
+    @rewrite area*2.5 begin
         bI => Sb
 		SI => bS
 		Sb => bb
-		Sb => SS /3
+		Sb => SS
 	end
 
 	# Add a dripping grey shadow under the Slate rock.
 	@rewrite begin
-		Sb => gb %1.0 \[+y]
+		Sb => gb \[+y]
 		# Drip, and optionally forbid further drip using a Green pixel.
 		gbbb => ggg{Gb} %0.4 \[+y]
 	end

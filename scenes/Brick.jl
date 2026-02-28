@@ -1,6 +1,6 @@
 @markovjunior 'b' 2 begin
     # Mark the min corner.
-    @draw_box 'B' min=0 size=0
+    @fill 'B' min=0 size=0
 
     # Pick an "across-brick" axis (ideally vertical but whatever).
     @do_n 1 begin

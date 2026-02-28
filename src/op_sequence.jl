@@ -76,13 +76,20 @@ function markov_op_iterate(s::MarkovOpSequence, state::MarkovOpSequence_State,
                            context::MarkovOpContext,
                            n_ticks_left::Ref{Optional{Int}}) where {N}
     # Run each sub-op within a type-stable context.
-    function run_sub_op(sub_op::TOp, current_state::TState,
+    function run_sub_op(sub_op::TOp, current_state::TState, idx::Int,
                         ::Val{BInfiniteTicks}
                        ) where {TOp, TState, BInfiniteTicks}
         # Note that we may need to handle cases where the initial state is `nothing`.
+        logic_logln("Running sub-op ", idx, BInfiniteTicks ? " infinitely" : "",
+                     ": ", typeof(sub_op))
         next_state = current_state
         while exists(next_state) && (BInfiniteTicks || (n_ticks_left[] > 0))
             next_state = markov_op_iterate(sub_op, next_state, grid, rng, context, n_ticks_left)
+        end
+        if exists(next_state)
+            logic_logln("Couldn't finish the sub-op")
+        else
+            logic_logln("Finished the sub-op!")
         end
         return next_state
     end
@@ -97,7 +104,7 @@ function markov_op_iterate(s::MarkovOpSequence, state::MarkovOpSequence_State,
         @markovjunior_assert exists(state.current_op_state) "Iterating on a non-running Sequence!?"
         @set! state.current_op_state = run_sub_op(
             s.ops[state.current_op_idx], state.current_op_state,
-            b_infinite_ticks
+            state.current_op_idx, b_infinite_ticks
         )
 
         # Keep advancing until they all finish or we run out of ticks.
@@ -108,7 +115,7 @@ function markov_op_iterate(s::MarkovOpSequence, state::MarkovOpSequence_State,
                 state.repetitions_left,
                 let new_idx = state.current_op_idx + 1
                     new_state = markov_op_initialize(s.ops[new_idx], grid, rng, context)
-                    (new_idx, run_sub_op(s.ops[new_idx], new_state, b_infinite_ticks))
+                    (new_idx, run_sub_op(s.ops[new_idx], new_state, new_idx, b_infinite_ticks))
                 end...
             )
         end

@@ -1,12 +1,12 @@
 @markovjunior 'b' begin
-    # Pick a source cell.
+    # Pick one source cell.
     @rewrite 1 b => w
 
-	# Carve out walls until none are left.
-    # Mark every other cell beige instead of white,
+	# Carve out walls from the source until none are left.
+    # Mark alternating spaces Green instead of white,
     #   so that tunnels can't be carved right next to each other.
-	@rewrite bbw => wEw
+	@rewrite bbw => wGw
 
-    # Clean up the beige.
-	@rewrite E => w
+    # Clean up the Green.
+	@rewrite G => w
 end

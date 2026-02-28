@@ -70,6 +70,7 @@ const BUILT_WITH_TOOL = convert(Bool, get(ENV, "JMJ_BUILD_WITH_TOOL", 1))
 
 
 # Core library:
+include("utils.jl")
 include("cells.jl")
 include("algo.jl")
 include("dsl.jl")

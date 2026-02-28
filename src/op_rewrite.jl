@@ -72,8 +72,6 @@ function rule_matches(r::RewriteRule_Strip{NCells, TCells}, grid::CellGrid{NDims
     end)
 end
 
-#TODO: If no rules have a mask in a @rewrite op, don't generate a mask
-
 "
 Finds every match for a given rule that touches a given subset of the grid,
   excluding rule placements that start at cells which fail the given mask.
@@ -87,7 +85,7 @@ If your lambda returns anything other than `nothing`,
 "
 function visit_rule_match_data(process_candidate::TLambda,
                                r::RewriteRule_Strip{NCells, TCells}, grid::CellGrid{NDims},
-                               grid_mask::MaskGrid{NDims}, rule_chosen_mask::Float32,
+                               grid_mask::Optional{MaskGrid{NDims}}, rule_chosen_mask::Float32,
                                inner_subset::Bplus.Math.BoxI{NDims}
                               )::Optional where {NCells, TCells, NDims, TLambda}
     function process_dir(dir::GridDir)
@@ -122,7 +120,7 @@ function visit_rule_match_data(process_candidate::TLambda,
         )
 
         for rule_start_pos::CellIdx{NDims} in first_pos:last_pos
-            if grid_mask[rule_start_pos] <= rule_chosen_mask
+            if isnothing(grid_mask) || grid_mask[rule_start_pos] <= rule_chosen_mask
                 user_out = process_candidate(rule_start_pos, dir,
                                              rule_matches(r, grid, rule_start_pos, dir))
                 exists(user_out) && return user_out
@@ -151,13 +149,13 @@ struct RewriteCache{NDims, NRules, TGrid<:CellGrid{NDims}, TRules<:NTuple{NRules
     grid::TGrid
     rules::TRules
 
-    mask_grid::MaskGrid{NDims}
+    mask_grid::Optional{MaskGrid{NDims}}
     rule_masks::NTuple{NRules, Float32}
 
     applications::Vector{OrderedSet{Tuple{CellIdx{NDims}, GridDir}}}
 end
 
-function RewriteCache(grid::CellGrid{NDims}, mask_grid::MaskGrid{NDims},
+function RewriteCache(grid::CellGrid{NDims}, mask_grid::Optional{MaskGrid{NDims}},
                       rules::NTuple{NRules, RewriteRule_Strip},
                       mask_for_each_rule::NTuple{NRules, Float32},
                       context::MarkovOpContext
@@ -226,13 +224,74 @@ function close_rewrite_cache(cache::RewriteCache, context::MarkovOpContext)
 end
 
 
+#####################################
+#  Rewrite Op: priorities interface
+
+"A potential application of a specific rule to a specific part of the grid"
+struct Rewrite1DPotentialApplication{NDims}
+    rule_idx::Int
+    desirability::Float32 # Weight*biases. May have any non-negative value.
+    start_cell::CellIdx{NDims}
+    dir::GridDir
+end
+"
+Collective information about a group of potential rule applications.
+Desirability is a potential application's bias value multiplied by the rule's weight.
+"
+struct RewriteGroupDesirability
+    min::Float32
+    max::Float32
+    sum::Float32
+end
+RewriteGroupDesirability() = RewriteGroupDesirability(Inf32, -Inf32, 0.0f0)
+function add_new_desirability(data::RewriteGroupDesirability, new_val::Float32)
+    @markovjunior_assert(new_val >= 0, "Negative desirability: ", new_val, " among ", data)
+    RewriteGroupDesirability(
+        min(data.min, new_val),
+        max(data.max, new_val),
+        data.sum + new_val
+    )
+end
+#
+
+#TODO: Priorities should have control over evaluation of desirability, as most of them don't need to know the desirability of EVERY application for EVERY rule. This means they need to have an associated state object.
+
+"
+Decides which rewrite rule to apply.
+
+Must implement the following interface:
+* `pick_rule_using_rewrite_priority(...)` to return the rule index.
+* `parse_markovjunior_rewrite_priority(::Val{x}, ...)`
+  to parse itself from the statement `PRIORITY(x, args...)`
+* `dsl_string(self)` to turn the struct back into a DSL statement.
+"
+abstract type AbstractMarkovRewritePriority end
+Base.:(==)(a::AbstractMarkovRewritePriority, b::AbstractMarkovRewritePriority) = (
+    typeof(a) == typeof(b) &&
+    all(getfield(a, f) == getfield(b, f) for f in fieldnames(typeof(a)))
+)
+
+pick_rule_using_rewrite_priority(priority::AbstractMarkovRewritePriority,
+                                 rewite_op, rewrite_op_state,
+                                 rng, op_context
+                                )::Int = error(
+    "Unimplemented: ", typeof(priority)
+)
+parse_markovjunior_rewrite_priority(::Val{Name}, expr_args, inputs::MacroParserInputs) where {Name} =
+    error("Unimplemented: ", Name)
+
+dsl_string(p::AbstractMarkovRewritePriority) = error("Unimplemented: ", typeof(p))
+
+
 #########################
 #  Rewrite Op: 1D strip
 
 "A simple MarkovJunior rewrite op, affecting a 1D strip of pixels"
 struct MarkovOpRewrite1D{TRules <: Tuple{Vararg{RewriteRule_Strip}},
-                         TBias <: Tuple{Vararg{AbstractMarkovBias}}
+                         TBias <: Tuple{Vararg{AbstractMarkovBias}},
+                         TPriority <: AbstractMarkovRewritePriority
                         } <: AbstractMarkovOp
+    priority::TPriority
     rules::TRules
     threshold::Optional{Threshold}
     biases::TBias
@@ -241,20 +300,49 @@ end
 mutable struct MarkovOpRewrite1D_State{NDims, NRules, TGrid, TRules<:NTuple{NRules, RewriteRule_Strip},
                                        NBiases, TFullBias<:NTuple{NBiases, AbstractMarkovBias},
                                                 TBiasStates<:NTuple{NBiases, Any}}
-    applications_left::Optional{Int} # Infinite if not given
+    # If not given, it can apply infinitely-many times.
+    applications_left::Optional{Int}
+
     rewrite_cache::RewriteCache{NDims, NRules, TGrid, TRules}
+
+    # All biases, incluing those inherited from parent ops.
     biases::TFullBias
     bias_states::TBiasStates
-    weighted_options_buffer::Vector{Tuple{Int, Float32, CellIdx{NDims}, GridDir}}
-    weight_data_buffer::Base.RefValue{NTuple{3, Float32}} # Min, Max, Sum
-end
 
-function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule_Strip}, TBias},
+    #TODO: Rename the below fields to be more correct.
+
+    # Every possible rule application: (rule_idx, priority, first_cell, dir_from_cell).
+    # They are sorted by rule -- see 'weighted_options_buffer_first_indices'.
+    weighted_options_buffer::Vector{Rewrite1DPotentialApplication{NDims}}
+    # For each rule, indicates the first index of the first entry
+    #    in 'weighted_options_buffer' using that rule.
+    #
+    # An extra entry is at the end to simplify use of this array.
+    # The range of entries for rule i (abbreviating fields as 'wobfi' and 'wob')
+    #    is 'wobfi[i] : (wobfi[i+1]-1)'.
+    weighted_options_buffer_first_indices::Vector{Int}
+
+    # Info about the range of rule weights*biases, across all rules.
+    weight_data_buffer::RewriteGroupDesirability
+    # Info about all potential applications of each individual rule.
+    weight_data_buffer_per_rule::Vector{RewriteGroupDesirability}
+end
+rewrite_rule_option_indices(state::MarkovOpRewrite1D_State, rule_idx::Integer) = (
+    state.weighted_options_buffer_first_indices[rule_idx] :
+     (state.weighted_options_buffer_first_indices[rule_idx+1] - 1)
+)
+
+function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule_Strip}, TBias, TPriority},
                               grid::CellGrid{NDims}, rng::PRNG,
                               context::MarkovOpContext
-                             ) where {NDims, NRules, TBias}
-    mask_grid = markov_allocator_acquire_array(context.allocator, size(grid), Float32)
-    rand!(rng, mask_grid)
+                             ) where {NDims, NRules, TBias, TPriority}
+    mask_grid = if all(strip::RewriteRule_Strip -> isnothing(strip.mask), r.rules)
+        nothing
+    else
+        a = markov_allocator_acquire_array(context.allocator, size(grid), Float32)
+        rand!(rng, a)
+        a
+    end
 
     cache = RewriteCache(grid, mask_grid, r.rules,
                          map(ru -> pick_mask(ru, rng), r.rules),
@@ -271,9 +359,10 @@ function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule_
                                         length(biases), typeof(biases), TBiasStates}(
         threshold, cache,
         biases, bias_states,
-        markov_allocator_acquire_array(context.allocator, tuple(128),
-                                       Tuple{Int, Float32, CellIdx{NDims}, GridDir}),
-        Ref{NTuple{3, Float32}}()
+        markov_allocator_acquire_array(context.allocator, tuple(128), Rewrite1DPotentialApplication{NDims}),
+        markov_allocator_acquire_array(context.allocator, tuple(NRules+1), Int),
+        RewriteGroupDesirability(),
+        markov_allocator_acquire_array(context.allocator, tuple(NRules), RewriteGroupDesirability)
     )
     if all(isempty, cache.applications)
         logic_logln("MarkovOpRewrite1D has no options at the start; canceling...")
@@ -287,12 +376,12 @@ function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule_
         return out_state
     end
 end
-function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
+function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases, TPriority},
                            state::MarkovOpRewrite1D_State{NDims, NRules, TGrid, TRules, NBiases, TFullBias, TBiasStates},
                            grid::CellGrid{NDims}, rng::PRNG,
                            context::MarkovOpContext,
                            ticks_left::Ref{Optional{Int}}
-                          ) where {NDims, NRules, TGrid, TRules,
+                          ) where {NDims, NRules, TGrid, TRules, TPriority,
                                    NBiases, TFullBias, TBiasStates, TSelfBiases}
     @markovjunior_assert(get_something(state.applications_left, 1) > 0)
     logic_logln("Remaining threshold for this rewrite op: ",
@@ -301,35 +390,44 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
     while isnothing(ticks_left[]) || (ticks_left[] > 0)
         # Get all the options and their weights.
         empty!(state.weighted_options_buffer)
-        state.weight_data_buffer[] = (Inf32, -Inf32, 0.0f0)
+        state.weighted_options_buffer_first_indices .= -1
+        state.weight_data_buffer = RewriteGroupDesirability()
+        for i in 1:NRules
+            state.weight_data_buffer_per_rule[i] = RewriteGroupDesirability()
+        end
         foreach(r.rules, 1:NRules) do rule, rule_i
+            state.weighted_options_buffer_first_indices[rule_i] = 1 + length(state.weighted_options_buffer)
             for (start_cell, dir) in state.rewrite_cache.applications[rule_i]
                 cell_line = CellLine(start_cell, dir, convert(Int32, length(rule.cells)))
                 biases::NTuple{NBiases, Optional{Float32}} = markov_bias_calculate.(
                     state.biases, state.bias_states,
                     Ref(grid), Ref(cell_line), Ref(rng)
                 )
+                @markovjunior_assert(all(b -> something(b, 1.0f0) >= 0, biases),
+                                     "Some biases returned negative values! ",
+                                       collect(zip(typeof.(state.biases), biases)))
+
                 if all(exists, biases)
-                    bias = sum(biases, init=zero(Float32))
-                    push!(state.weighted_options_buffer, (
-                        rule_i, bias,
+                    desirability = rule.weight * (iszero(NBiases) ? 1.0f0 : sum(biases, init=zero(Float32)))
+                    push!(state.weighted_options_buffer, Rewrite1DPotentialApplication(
+                        rule_i, desirability,
                         start_cell, dir
                     ))
 
-                    state.weight_data_buffer[] = let d = state.weight_data_buffer[]
-                        (
-                            min(d[1], bias),
-                            max(d[2], bias),
-                            d[3] + bias
-                        )
-                    end
+                    state.weight_data_buffer = add_new_desirability(
+                        state.weight_data_buffer, desirability
+                    )
+                    state.weight_data_buffer_per_rule[rule_i] = add_new_desirability(
+                        state.weight_data_buffer_per_rule[rule_i], desirability
+                    )
                 end
             end
         end
+        state.weighted_options_buffer_first_indices[NRules+1] = 1 + length(state.weighted_options_buffer)
 
         logic_logln("There are ", length(state.weighted_options_buffer),
                       " options with biases ranging from ",
-                      state.weight_data_buffer[][1], " to ", state.weight_data_buffer[][2])
+                      state.weight_data_buffer.min, " to ", state.weight_data_buffer.max)
 
         # If no options are left, we're done.
         if isempty(state.weighted_options_buffer)
@@ -337,46 +435,49 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases},
             return nothing
         end
 
-        # Pick an option -- if all weights are equal, then use trivial uniform-random selection.
-        (pick_rule_i, pick_start_cell, pick_dir) =
-          if state.weight_data_buffer[][1] == state.weight_data_buffer[][2]
-            logic_logln("Luckily we can use uniform-random selection, which is much faster")
-            pick_option_i = rand(rng, 1:length(state.weighted_options_buffer))
-            choice = state.weighted_options_buffer[pick_option_i]
-            (choice[1], choice[3], choice[4])
-        else
-            # Normalize the bias weights by subtracting the min then dividing by their sum.
-            # Adding the min to N weights means increasing the sum by min*N.
-            weight_norm_offset = -state.weight_data_buffer[][1]
-            weight_norm_scale = 1.0f0 / (state.weight_data_buffer[][3] *
-                                        length(state.weighted_options_buffer))
-            logic_logln("Bias weights transform: (+", weight_norm_offset, ")*", weight_norm_scale)
-
-            # Pick an option using weighted randomness.
-            pick_t = rand(rng, Float32)
-            (() -> begin
-                picked_f = 0.0f0
-                for (rule_i, raw_bias, start_cell, dir) in state.weighted_options_buffer
-                    bias = (raw_bias + weight_norm_offset) * weight_norm_scale
-                    if picked_f <= pick_t + bias
-                        return (rule_i, start_cell, dir)
-                    else
-                        picked_f += bias
-                    end
-                end
-                # If we get here, then probably we picked a value near 1.0
-                #    and floating-point error kept us from choosing the last element.
-                return let answer = state.weighted_options_buffer[end]
-                    (answer[1], answer[3], answer[4])
-                end
-            end)()
+        # Pick a rule using the chosen Priority.
+        # Interpret an invalid choice as "no options left".
+        pick_rule_i = pick_rule_using_rewrite_priority(r.priority, r, state, rng, context)
+        logic_logln("Chose rule ", pick_rule_i)
+        if !in(pick_rule_i, 1:NRules)
+            logic_logln("Invalid rule index! This is the end of the Op.")
+            markov_op_cancel(r, state, context)
+            return nothing
         end
-        logic_logln("Picked rule ", pick_rule_i, " at ", pick_start_cell, " along ", pick_dir)
+        pick_options_range = rewrite_rule_option_indices(state, pick_rule_i)
+        if isempty(pick_options_range)
+            logic_logln("Rule has no options! This is the end of the Op.")
+            markov_op_cancel(r, state, context)
+            return nothing
+        end
+        picked_options = @view state.weighted_options_buffer[pick_options_range]
+        @markovjunior_assert(all(o -> o.rule_idx == pick_rule_i, picked_options),
+                             "We chose rule ", pick_rule_i, " but its options (",
+                               pick_options_range, ") include rules ",
+                               unique(o->o.rule_idx for o in picked_options))
+        rule_desirability_data = state.weight_data_buffer_per_rule[pick_rule_i]
+
+        # Pick an option within that rule.
+        (pick_start_cell, pick_dir) =
+           # If all weights are equal then we can use use trivial uniform-random selection.
+          if rule_desirability_data.min == rule_desirability_data.max
+            logic_logln("Luckily we can use uniform-random selection, which is much faster")
+            choice = rand(rng, picked_options)
+            (choice.start_cell, choice.dir)
+          else
+            picked_option = picked_options[
+                weighted_random_array_element((o.desirability for o in picked_options),
+                                              rule_desirability_data.sum,
+                                              rand(rng, Float32))
+            ]
+            (picked_option.start_cell, picked_option.dir)
+        end
+        logic_logln("Decided to apply the rule at ", pick_start_cell, " along ", pick_dir)
 
         # Apply the rule.
         # Because each rule is a different type but known at compile-time,
         #    we should add a layer of dispatch when executing it.
-        #TODO: Include grid dir in the dispatch data; profile
+        #TODO: Include grid dir in the dispatch data; profile. (Update: I think this is a bad idea unless symmetry options are also compile-time data)
         rule_len::Int32 = ((rule::RewriteRule_Strip) -> begin
             source_values = Tuple(
                 grid[grid_dir_pos_along(pick_dir, pick_start_cell, i-1)]
@@ -421,10 +522,19 @@ end
 
 function markov_op_cancel(op::MarkovOpRewrite1D, s::MarkovOpRewrite1D_State,
                           context::MarkovOpContext)
-    markov_allocator_release_array(context.allocator, s.rewrite_cache.mask_grid)
-    markov_allocator_release_array(context.allocator, s.weighted_options_buffer)
-    foreach(markov_bias_cleanup, s.biases, s.bias_states)
-    close_rewrite_cache(s.rewrite_cache, context)
+    # We're freeing a lot of stuff here, so move the allocator to a type-stable context.
+    function run(allocator::T) where {T<:AbstractMarkovAllocator}
+        foreach(markov_bias_cleanup, s.biases, s.bias_states)
+        close_rewrite_cache(s.rewrite_cache, context)
+
+        if exists(s.rewrite_cache.mask_grid)
+            markov_allocator_release_array(allocator, s.rewrite_cache.mask_grid)
+        end
+        markov_allocator_release_array(allocator, s.weighted_options_buffer)
+        markov_allocator_release_array(allocator, s.weight_data_buffer_per_rule)
+        markov_allocator_release_array(allocator, s.weighted_options_buffer_first_indices)
+    end
+    run(context.allocator)
 end
 
 
@@ -489,6 +599,7 @@ dsl_string(@nospecialize op::MarkovOpRewrite1D) = string(
     else
         string(
             "begin\n    ",
+            "PRIORITIZE(", dsl_string(op.priority), ")\n    ",
             iter_join(dsl_string.(op.rules), "\n    ")...,
             "\nend"
         )
@@ -506,6 +617,7 @@ dsl_string(@nospecialize op::MarkovOpRewrite1D) = string(
         ""
     end
 )
+
 
 "Note that Source (lhs) patterns will return a Set as a List, for later processing"
 function parse_markovjunior_rewrite_rule_side(inputs::MacroParserInputs, loc, expr,
@@ -796,15 +908,38 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
         pop!(inputs.op_stack_trace)
     end
 end
-function parse_markovjunior_rewrite_rules_strip(inputs::MacroParserInputs, loc, expr)::Tuple{Vararg{RewriteRule_Strip}}
+
+function parse_markovjunior_rewrite_rules_strip(inputs::MacroParserInputs, loc, expr
+                                               )::Tuple{AbstractMarkovRewritePriority, Tuple{Vararg{RewriteRule_Strip}}}
     if Base.isexpr(expr, :block)
         outputs = Vector{RewriteRule_Strip}()
+        priority = Ref{Optional{AbstractMarkovRewritePriority}}(nothing)
         parse_markovjunior_block(expr.args) do inner_loc, line
-            push!(outputs, parse_markovjunior_rewrite_rule_strip(inputs, inner_loc, line))
+            if @capture(line, PRIORITIZE(args__))
+                with_parser_stacktrace(inputs, "PRIORITIZE(...)") do
+                    if isempty(args)
+                        raise_error_at(loc, inputs, "Didn't provide a name!")
+                    elseif exists(priority[])
+                        raise_error_at(loc, inputs, "Provided more than once!")
+                    elseif !isa(args[1], Symbol)
+                        raise_error_at(loc, inputs, "The first argument isn't a name but a ", typeof(args[1]))
+                    else
+                        priority[] = parse_markovjunior_rewrite_priority(
+                            Val(args[1]),
+                            @view(args[2:end]),
+                            inputs
+                        )
+                    end
+                end
+            else
+                push!(outputs, parse_markovjunior_rewrite_rule_strip(inputs, inner_loc, line))
+            end
         end
-        Tuple(outputs)
+        return (something(priority[], MarkovRewritePriority_Everything()),
+                Tuple(outputs))
     else
-        tuple(parse_markovjunior_rewrite_rule_strip(inputs, loc, expr))
+        (MarkovRewritePriority_Everything(),
+         tuple(parse_markovjunior_rewrite_rule_strip(inputs, loc, expr)))
     end
 end
 function parse_markovjunior_op(::Val{Symbol("@rewrite")},
@@ -819,7 +954,7 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
     if length(args) == 3
         with_parsed_markovjunior_bias_statement(inputs, loc, args[3]) do biases
             return MarkovOpRewrite1D(
-                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2]),
+                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2])...,
                 parse_markovjunior_threshold(inputs, loc, args[1]),
                 Tuple(biases)
             )
@@ -827,14 +962,14 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
     elseif length(args) == 2
         if check_markovjunior_threshold_appearance(args[1])
             return MarkovOpRewrite1D(
-                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2]),
+                parse_markovjunior_rewrite_rules_strip(inputs, loc, args[2])...,
                 parse_markovjunior_threshold(inputs, loc, args[1]),
                 ()
             )
         else
             with_parsed_markovjunior_bias_statement(inputs, loc, args[2]) do biases
                 return MarkovOpRewrite1D(
-                    parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1]),
+                    parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1])...,
                     nothing,
                     Tuple(biases)
                 )
@@ -842,7 +977,7 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
         end
     elseif length(args) == 1
         return MarkovOpRewrite1D(
-            parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1]),
+            parse_markovjunior_rewrite_rules_strip(inputs, loc, args[1])...,
             nothing,
             ()
         )
@@ -852,3 +987,138 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
         raise_error_at(nothing, inputs, "Statement is empty; needs to at least have one rewrite rule!")
     end
 end
+
+
+##############################
+#  Rewrite Op: priority types
+
+struct MarkovRewritePriority_Everything <: AbstractMarkovRewritePriority end
+function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Everything,
+                                          op::MarkovOpRewrite1D, state::MarkovOpRewrite1D_State,
+                                          rng::PRNG, context::MarkovOpContext)::Int
+    return weighted_random_array_element(
+        (d.sum for d in state.weight_data_buffer_per_rule),
+        state.weight_data_buffer.sum,
+        rand(rng, Float32)
+    )
+end
+function parse_markovjunior_rewrite_priority(::Val{:everything}, expr_args, inputs::MacroParserInputs)
+    if !isempty(expr_args)
+        raise_error_at(nothing, inputs,
+                       "`everything` priority should have no arguments! Got ", length(expr_args))
+    end
+    return MarkovRewritePriority_Everything()
+end
+dsl_string(::MarkovRewritePriority_Everything) = "everything"
+
+struct MarkovRewritePriority_Fair <: AbstractMarkovRewritePriority end
+function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Fair,
+                                          op::MarkovOpRewrite1D, state::MarkovOpRewrite1D_State,
+                                          rng::PRNG, context::MarkovOpContext)::Int
+    n_options = length(op.rules)
+    chosen_i = rand(rng, 1:n_options)
+    while isempty(rewrite_rule_option_indices(state, chosen_i)) # This rule has no matches?
+        chosen_i = rand(rng, 1:n_options)
+    end
+    return chosen_i
+end
+function parse_markovjunior_rewrite_priority(::Val{:fair}, expr_args, inputs::MacroParserInputs)
+    if !isempty(expr_args)
+        raise_error_at(nothing, inputs,
+                       "`fair` priority should have no arguments! Got ", length(expr_args))
+    end
+    return MarkovRewritePriority_Fair()
+end
+dsl_string(::MarkovRewritePriority_Fair) = "fair"
+
+struct MarkovRewritePriority_Earliest <: AbstractMarkovRewritePriority end
+function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Earliest,
+                                          op::MarkovOpRewrite1D, state::MarkovOpRewrite1D_State,
+                                          rng::PRNG, context::MarkovOpContext)::Int
+    for i in 1:length(op.rules)
+        if !isempty(rewrite_rule_option_indices(state, i))
+            return i
+        end
+    end
+    error("No rules have options???\n  Options = ", state.weighted_options_buffer,
+             "\n  Idcs = ", state.weighted_options_buffer_first_indices)
+end
+function parse_markovjunior_rewrite_priority(::Val{:earliest}, expr_args, inputs::MacroParserInputs)
+    if !isempty(expr_args)
+        raise_error_at(nothing, inputs,
+                       "`earliest` priority should have no arguments! Got ", length(expr_args))
+    end
+    return MarkovRewritePriority_Earliest()
+end
+dsl_string(::MarkovRewritePriority_Earliest) = "earliest"
+
+struct MarkovRewritePriority_Latest <: AbstractMarkovRewritePriority end
+function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Latest,
+                                          op::MarkovOpRewrite1D, state::MarkovOpRewrite1D_State,
+                                          rng::PRNG, context::MarkovOpContext)::Int
+    for i in length(op.rules):-1:1
+        if !isempty(rewrite_rule_option_indices(state, i))
+            return i
+        end
+    end
+    error("No rules have options???\n  Options = ", state.weighted_options_buffer,
+             "\n  Idcs = ", state.weighted_options_buffer_first_indices)
+end
+function parse_markovjunior_rewrite_priority(::Val{:latest}, expr_args, inputs::MacroParserInputs)
+    if !isempty(expr_args)
+        raise_error_at(nothing, inputs,
+                       "`latest` priority should have no arguments! Got ", length(expr_args))
+    end
+    return MarkovRewritePriority_Latest()
+end
+dsl_string(::MarkovRewritePriority_Latest) = "latest"
+
+struct MarkovRewritePriority_Common <: AbstractMarkovRewritePriority end
+function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Common,
+                                          op::MarkovOpRewrite1D, state::MarkovOpRewrite1D_State,
+                                          rng::PRNG, context::MarkovOpContext)::Int
+    largest_i = 0
+    largest_count::Float32 = -Inf32 # Float because counts are weighted
+    for (i, rule) in zip(1:length(op.rules), op.rules)
+        n_options = length(rewrite_rule_option_indices(state, i))
+        next_count = n_options * rule.weight
+        if next_count > largest_count
+            largest_count = next_count
+            largest_i = i
+        end
+    end
+    return largest_i
+end
+function parse_markovjunior_rewrite_priority(::Val{:common}, expr_args, inputs::MacroParserInputs)
+    if !isempty(expr_args)
+        raise_error_at(nothing, inputs,
+                       "`common` priority should have no arguments! Got ", length(expr_args))
+    end
+    return MarkovRewritePriority_Common()
+end
+dsl_string(::MarkovRewritePriority_Common) = "common"
+
+struct MarkovRewritePriority_Rare <: AbstractMarkovRewritePriority end
+function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Rare,
+                                          op::MarkovOpRewrite1D, state::MarkovOpRewrite1D_State,
+                                          rng::PRNG, context::MarkovOpContext)::Int
+    smallest_i = 0
+    smallest_count::Float32 = Inf32 # Float because counts are weighted
+    for (i, rule) in zip(1:length(op.rules), op.rules)
+        n_options = length(rewrite_rule_option_indices(state, i))
+        next_count = n_options * rule.weight
+        if next_count < smallest_count
+            smallest_count = next_count
+            smallest_i = i
+        end
+    end
+    return smallest_i
+end
+function parse_markovjunior_rewrite_priority(::Val{:rare}, expr_args, inputs::MacroParserInputs)
+    if !isempty(expr_args)
+        raise_error_at(nothing, inputs,
+                       "`rare` priority should have no arguments! Got ", length(expr_args))
+    end
+    return MarkovRewritePriority_Rare()
+end
+dsl_string(::MarkovRewritePriority_Rare) = "rare"

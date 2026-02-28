@@ -4,7 +4,6 @@ A Julia reimagining of [this awesome procedural generation algorithm](https://gi
 
 ````julia
 ] add MarkovJunior
-
 > MarkovJunior.main()
 ````
 
@@ -17,29 +16,49 @@ A Julia reimagining of [this awesome procedural generation algorithm](https://gi
 ## Description
 
 The released 0.1 version is a proof-of-concept, totally functional and fun to play with.
-Currently on main I am rebuilding on a much more comprehensive version with:
-* New and improved syntax
-* Very robust support for any number of dimensions (e.g. 4D for animated 3D structures)
-* More features that the original had (though probably never all of them)
-* Several cool tricks that the original doesn't have
-* The ability to run as both a standalone tool and a C-style DLL.
+It is missing many of the features of the original library,
+  but boasts support for any number of dimensions and comes with the interactive tool.
 
-The math and rendering is all on top of my [B+ game framework](https://github.com/heyx3/B-plus).
-THe released 0.1 version of the tool is written for 2D scenes, with 3D on the horizon,
-  but the algorithm (and DSL) can operate in any number of dimensions!
+Math and rendering is all on top of my [B+ game framework](https://github.com/heyx3/B-plus).
+The current (v0.1) tool is only written to show 2D scenes.
 
-Note that during development this tool uses the master branch of B+ (and its sub-packages),
-  so if you're using main and getting compile errors related to B+
-  then clone it (and its sub-packages) and add to this project with `dev ../Bplus`.
+Currently on main I am building a comprehensive v2.0, including:
+* New concise syntax
+* Much more flexible rewrite rules, including randomization "Modifiers" and multidimensional patterns
+* Continued support for any-dimensional grids (e.g. 4D for animated 3D)
+* More operations from the original software
+* The ability to run as both a standalone tool and a C-style DLL
+* The ability to *extend* the syntax with your own:
+  * Operations (like the built-in rewriting, upscaling/downscaling, WFC, etc)
+  * Biases (like the original `field` and `observe`)
+  * Priorities (deciding how rewrite operations balance different kinds of rules, like "earliest-first")
+* A renderer for 3D grids (and 4D, as animated 3D) in the tool
+* A way to save images and animations through the tool
+
+## Development
+
+During development this tool uses the master branch of B+ (and its sub-packages).
+Clone those four packages (BplusCore, BplusApp, BplusTools, Bplus)
+  and run the following from the Julia REPL:
+
+````julia
+# Add local B+ sub-packages to B+
+] activate ../Bplus.jl
+] dev ../BplusCore.jl ../BplusApp.jl ../BplusTools.jl
+# Add local B+ to MarkovJunior
+] activate .
+] dev ../Bplus.jl
+````
 
 ## Syntax
 
 I've developed my own Domain-Specific Language ("DSL"), separate from the original MarkovJunior.
 
-The current version is undocumented but pretty simple to work out from the sample scenes.
+The final planned version [is documented here](docs/dsl.md).
 
-The new planned version [is documented here](docs/dsl.md).
+The current version is undocumented but pretty simple to work out from the sample scenes.
 
 ## Scenes
 
 Different algorithm setups can be found in the *scenes/* folder.
+They are commented with explanations of how they work.
