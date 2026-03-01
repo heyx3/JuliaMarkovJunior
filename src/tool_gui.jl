@@ -301,6 +301,24 @@ function step_gui_runner_algo(runner::GuiRunner, n_iterations::Int)
 
     return nothing
 end
+function finish_gui_runner_algo(runner::GuiRunner, should_update_texture::Ref{Bool})
+    start_t = time()
+    while !gui_runner_is_finished(runner)
+        step_gui_runner_algo(runner, 50) #TODO: gradually increase tick count and time it
+        should_update_texture[] = true
+
+        if (time() - start_t) > runner.memory.max_seconds_for_run_to_end
+            runner.algorithm_error_msg = string(
+                "ENDLESS RUN DETECTED: took longer than ",
+                 runner.memory.max_seconds_for_run_to_end,
+                 " seconds to complete the grid!",
+                "\n  If this was the first run, try again now that the JIT is warmed up.",
+                "\n  Otherwise increase the timeout."
+            )
+            break
+        end
+    end
+end
 
 gui_runner_is_finished(runner::GuiRunner)::Bool = isnothing(runner.algorithm_state) ||
                                                   markov_algo_is_finished(runner.algorithm, runner.algorithm_state)
@@ -480,19 +498,7 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
             if gui_with_style(() -> CImGui.Button("Run to End", BUTTON_SIZE_RUN_SPECIAL),
                               LCIG.ImGuiCol_Button, BUTTON_COLOR_RUN_SPECIAL)
             #begin
-                start_t = time()
-                while !gui_runner_is_finished(runner)
-                    step_gui_runner_algo(runner, 50) #TODO: gradually increase tick count and time it
-                    should_update_texture[] = true
-                    if (time() - start_t) > runner.memory.max_seconds_for_run_to_end
-                        runner.algorithm_error_msg = string(
-                            "ENDLESS RUN DETECTED: took longer than ",
-                            runner.memory.max_seconds_for_run_to_end,
-                            " seconds to complete the grid!"
-                        )
-                        break
-                    end
-                end
+                finish_gui_runner_algo(runner, should_update_texture)
             end
         CImGui.TableNextColumn()
             CImGui.Dummy(0, UNITS_VPAD)
@@ -692,6 +698,12 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
 
         if CImGui.Button("Restart##WithNewAlgorithm")
             reset_gui_runner_algo(runner, false, true, true)
+            update_gui_runner_texture_2D(runner)
+        end
+        CImGui.SameLine(0, 20)
+        if CImGui.Button("Restart and Finish##WithNewAlgorithm")
+            reset_gui_runner_algo(runner, false, true, true)
+            finish_gui_runner_algo(runner, Ref(false))
             update_gui_runner_texture_2D(runner)
         end
     end
