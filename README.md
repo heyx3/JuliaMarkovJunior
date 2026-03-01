@@ -14,7 +14,7 @@ markovjunior_run_tool()
 
 ![A screenshot of the Terrain.jl scene](docs/Screenshot.png)
 
-[![A demo video, sped up 2x](https://img.youtube.com/vi/mjBu7Omch1s/0.jpg)](https://youtu.be/mjBu7Omch1s)
+[![A demo video, sped up 2x](https://img.youtube.com/vi/_I9aU8Ad-tE/0.jpg)](https://www.youtube.com/watch?v=_I9aU8Ad-tE)
 
 *A YouTube video demo*
 
