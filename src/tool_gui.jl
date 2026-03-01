@@ -703,7 +703,9 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         CImGui.SameLine(0, 20)
         if CImGui.Button("Restart and Finish##WithNewAlgorithm")
             reset_gui_runner_algo(runner, false, true, true)
-            finish_gui_runner_algo(runner, Ref(false))
+            if !isempty(runner.algorithm_error_msg)
+                finish_gui_runner_algo(runner, Ref(false))
+            end
             update_gui_runner_texture_2D(runner)
         end
     end

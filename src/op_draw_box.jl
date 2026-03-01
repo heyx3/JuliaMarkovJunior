@@ -249,30 +249,30 @@ function parse_markovjunior_op(::Val{Symbol("@fill")},
         !@capture(full_line, @fill exCol_Char exSpace_Symbol(exArgNameA_=exArgValA_, exArgNameB_=exArgValB_) +exRuleAdd_   %exMask_) &&
         !@capture(full_line, @fill exCol_Char exSpace_Symbol(exArgNameA_=exArgValA_, exArgNameB_=exArgValB_) -exRuleSub_   %exMask_)
     #begin
-        raise_error_at(loc, inputs,
+        raise_parse_error(loc, inputs,
                        "Invalid format! Expected `@fill 'C' S(A=N, B=M) [rule] [mask]`")
     end
 
     # Do some quick error-checking of expression types.
-    !in(exArgNameA, (:min, :max, :size, :center)) && raise_error_at(
+    !in(exArgNameA, (:min, :max, :size, :center)) && raise_parse_error(
         loc, inputs,
         "Box space arguments should be two of `min`, `max`, `size`, and `center`! Got `",
           exArgNameA, "`"
     )
-    !in(exArgNameB, (:min, :max, :size, :center)) && raise_error_at(
+    !in(exArgNameB, (:min, :max, :size, :center)) && raise_parse_error(
         loc, inputs,
         "Box space arguments should be two of `min`, `max`, `size`, and `center`! Got `",
           exArgNameB, "`"
     )
-    !(exRuleAdd isa Optional{Symbol}) && raise_error_at(
+    !(exRuleAdd isa Optional{Symbol}) && raise_parse_error(
         loc, inputs,
         "Whitelist rule should be formatted like `+abc`, got `+", exRuleAdd, "`"
     )
-    !(exRuleSub isa Optional{Symbol}) && raise_error_at(
+    !(exRuleSub isa Optional{Symbol}) && raise_parse_error(
         loc, inputs,
         "Blacklist rule should be formatted like `-abc`, got `-", exRuleSub, "`"
     )
-    (exArgNameA == exArgNameB) && raise_error_at(
+    (exArgNameA == exArgNameB) && raise_parse_error(
         loc, inputs,
         "Used the same space parameter twice: `", exArgNameA, "`"
     )
@@ -285,7 +285,7 @@ function parse_markovjunior_op(::Val{Symbol("@fill")},
     elseif exMask isa Real
         convert(Float32, exMask)
     else
-        raise_error_at(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; got `%$exMask`")
+        raise_parse_error(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; got `%$exMask`")
     end
 
     # Parse the rule.
@@ -301,7 +301,7 @@ function parse_markovjunior_op(::Val{Symbol("@fill")},
     space = try
         DrawBoxSpace.from(Val(exSpace))
     catch e
-        raise_error_at(loc, inputs,
+        raise_parse_error(loc, inputs,
                        "Invald space! Got `", space, "`; expected one of `",
                           string.(DrawBoxSpace.instances()), "`")
     end
@@ -319,7 +319,7 @@ function parse_markovjunior_op(::Val{Symbol("@fill")},
                 Tuple(convert(Float32, a) for a in arg.args)
             end
         else
-            raise_error_at(loc, inputs,
+            raise_parse_error(loc, inputs,
                            "Invalid value for argument `", name, "`! ",
                              "Expected scalar or vector `(x, y, ...)`; got `",
                              arg, "`")
@@ -366,7 +366,7 @@ function parse_markovjunior_op(::Val{Symbol("@fill")},
 
     # Get the value of the fill color.
     if !haskey(CELL_CODE_BY_CHAR, exCol)
-        raise_error_at(loc, inputs,
+        raise_parse_error(loc, inputs,
                        "Unsupported color value '", exCol, "'! ",
                          "Supported are [ ", iter_join(keys(CELL_CODE_BY_CHAR), ", ")..., "]")
     end

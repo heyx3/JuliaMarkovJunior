@@ -124,7 +124,7 @@ function parse_markovjunior(_macro_args)::MarkovAlgorithm
             main_sequence = parse_markovjunior_sequence(inputs, a.args) do location, line
                 if @capture(line, @pragma prg__)
                     if (length(prg) < 1) || !isa(prg[1], Symbol)
-                        raise_error_at(line, inputs,
+                        raise_parse_error(line, inputs,
                                        "@pragma statement must have a name, e.g. @pragma Viz")
                     else
                         push!(pragmas, prg[1]=>collect(Any, prg[2:end]))
@@ -173,7 +173,7 @@ export ParsedMarkovAlgorithm, @markovjunior, parse_markovjunior,
 ##   Parser Utilities
 
 "Raises an error using the given LineNumberNode to point to user source"
-function raise_error_at(src::Optional{LineNumberNode}, state::MacroParserInputs, msg...)
+function raise_parse_error(src::Optional{LineNumberNode}, state::MacroParserInputs, msg...)
     stringify_ast(x) = if x isa Union{Symbol, Expr}
         string(x)
     else
@@ -231,7 +231,7 @@ function parse_markovjunior_sequence(try_handle_line, inputs::MacroParserInputs,
             ))
             pop!(inputs.op_stack_trace)
         else
-            raise_error_at(location, inputs,
+            raise_parse_error(location, inputs,
                            "Unexpected sequence expression: '", line, "'")
         end
     end
@@ -259,7 +259,7 @@ function push_parsed_markovjunior_bias_statement(inputs::MacroParserInputs, loca
             if @capture line f_Symbol(args__)
                 push!(output, parse_markovjunior_bias(Val(f), inputs, location, args))
             else
-                raise_error_at(location, inputs,
+                raise_parse_error(location, inputs,
                                "Invalid bias syntax! Expected a function call, got:", line)
             end
         finally
@@ -273,7 +273,7 @@ function push_parsed_markovjunior_bias_statement(inputs::MacroParserInputs, loca
     elseif Base.isexpr(biases, :block)
         parse_markovjunior_block(process_line, biases.args)
     else
-        raise_error_at(location, inputs,
+        raise_parse_error(location, inputs,
                        "Unexpected expression where bias was expected: ", biases)
     end
 
@@ -344,7 +344,7 @@ function parse_markovjunior_threshold(try_handle,
                 push!(inputs.op_stack_trace, "Range start `$a`")
                 result = parse_markovjunior_threshold(inputs, location, a)
                 if !isa(result, ThresholdScalar)
-                    raise_error_at(location, inputs, "Value not a scalar")
+                    raise_parse_error(location, inputs, "Value not a scalar")
                 end
                 pop!(inputs.op_stack_trace)
                 result
@@ -353,14 +353,14 @@ function parse_markovjunior_threshold(try_handle,
                 push!(inputs.op_stack_trace, "Range end `$b`")
                 result = parse_markovjunior_threshold(inputs, location, b)
                 if !isa(result, ThresholdScalar)
-                    raise_error_at(location, inputs, "Value not a scalar")
+                    raise_parse_error(location, inputs, "Value not a scalar")
                 end
                 pop!(inputs.op_stack_trace)
                 result
             end
             return ThresholdRange(aa, bb)
         else
-            raise_error_at(location, inputs, "Unexpected format for threshold; expected")
+            raise_parse_error(location, inputs, "Unexpected format for threshold; expected")
         end
     # Handle stack trace no matter what.
     finally

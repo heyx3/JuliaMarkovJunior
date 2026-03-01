@@ -629,7 +629,7 @@ function parse_markovjunior_rewrite_rule_side(inputs::MacroParserInputs, loc, ex
         elseif c == '_'
             RewriteRuleCell_Wildcard()
         else
-            raise_error_at(loc, inputs,
+            raise_parse_error(loc, inputs,
                            "Unsupported color value '", c, "'! Supported are ",
                            "[ ", iter_join(keys(CELL_CODE_BY_CHAR), ", ")..., " ]")
         end
@@ -662,11 +662,11 @@ function parse_markovjunior_rewrite_rule_side(inputs::MacroParserInputs, loc, ex
             elseif @capture(e, a_*b_)
                 [ flatten_rule_expr(a)..., flatten_rule_expr(b)... ]
             else
-                raise_error_at(loc, inputs, "Unsupported bit of syntax: ", e)
+                raise_parse_error(loc, inputs, "Unsupported bit of syntax: ", e)
                 @bp_check(false, "Unhandled: ", typeof(e), "(", e, ")")
             end
         end
-        flatten_rule_expr(o) = raise_error_at(loc, inputs, "Unsupported expression: ", typeof(o), "(", o, ")")
+        flatten_rule_expr(o) = raise_parse_error(loc, inputs, "Unsupported expression: ", typeof(o), "(", o, ")")
 
         flattened = flatten_rule_expr(expr)
 
@@ -682,20 +682,20 @@ function parse_markovjunior_rewrite_rule_side(inputs::MacroParserInputs, loc, ex
                 if isempty(invalid_elements)
                     return RewriteRuleCell_List(Tuple(try_lookup_char.(simple_repr[2])))
                 else
-                    raise_error_at(loc, inputs,
+                    raise_parse_error(loc, inputs,
                                    "Invalid nested syntax in ", isSource ? "Source" : "Dest",
                                      " part of rule!")
                 end
             elseif (simple_repr isa Pair) && (simple_repr[1] == :set)
                 if isSource
-                    raise_error_at(loc, inputs, "'Set' syntax (`{RGB}`) not allowed on the Source side")
+                    raise_parse_error(loc, inputs, "'Set' syntax (`{RGB}`) not allowed on the Source side")
                 end
 
                 invalid_elements = filter(c -> !isa(c, Char), simple_repr[2])
                 if isempty(invalid_elements)
                     return RewriteRuleCell_Set(simple_repr[2]...)
                 else
-                    raise_error_at(loc, inputs,
+                    raise_parse_error(loc, inputs,
                                    "Invalid nested syntax in ", isSource ? "Source" : "Dest",
                                      " part of rule!")
                 end
@@ -728,11 +728,11 @@ function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc
             elseif a == :w
                 return 4
             elseif a isa Symbol
-                raise_error_at(loc, inputs, "Invalid axis token `a`")
+                raise_parse_error(loc, inputs, "Invalid axis token `a`")
             end
 
             if a == 0
-                raise_error_at(loc, inputs, "Symmetry axes (and all other indices in Julia) are 1-based!")
+                raise_parse_error(loc, inputs, "Symmetry axes (and all other indices in Julia) are 1-based!")
             elseif a < 0
                 return -a
             elseif a > 0
@@ -744,21 +744,21 @@ function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc
         for expr in exprs
             if @capture(expr, a_...)
                 if exists(s_start_idx)
-                    raise_error_at(loc, inputs, "More than one use of the '...' syntax")
+                    raise_parse_error(loc, inputs, "More than one use of the '...' syntax")
                 elseif (a isa Integer) && (a < 0)
-                    raise_error_at(loc, inputs, "Can't name a grid dir (+/-) with the '...' syntax")
+                    raise_parse_error(loc, inputs, "Can't name a grid dir (+/-) with the '...' syntax")
                 else
                     s_start_idx = get_axis(a)
                 end
             elseif @capture(expr, +a_)
                 if !in(a, (:x, :y, :z, :w))
-                    raise_error_at(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
+                    raise_parse_error(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
                 else
                     push!(s_explicit, GridDir(get_axis(a), 1))
                 end
             elseif @capture(expr, -a_)
                 if !in(a, (:x, :y, :z, :w))
-                    raise_error_at(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
+                    raise_parse_error(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
                 else
                     push!(s_explicit, GridDir(get_axis(a), -1))
                 end
@@ -768,14 +768,14 @@ function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc
                 elseif expr < 0
                     push!(s_explicit, GridDir(-expr, -1))
                 else
-                    raise_error_at(loc, inputs, "symmetry axes (and all indices in Julia) are 1-based! You passed a 0")
+                    raise_parse_error(loc, inputs, "symmetry axes (and all indices in Julia) are 1-based! You passed a 0")
                 end
             elseif expr isa Symbol
                 axis = get_axis(expr)
                 push!(s_explicit, GridDir(axis, -1))
                 push!(s_explicit, GridDir(axis, 1))
             else
-                raise_error_at(loc, inputs, "Unsupported symmetry element: `", expr, "`")
+                raise_parse_error(loc, inputs, "Unsupported symmetry element: `", expr, "`")
             end
         end
 
@@ -790,12 +790,12 @@ function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc
             end
         end
         if !isempty(duplicates)
-            raise_error_at(loc, inputs, "Duplicate symmetry values found: ", collect(duplicates))
+            raise_parse_error(loc, inputs, "Duplicate symmetry values found: ", collect(duplicates))
         end
         #   * The lower-bound should start after the explicit list:
         max_explicit_axis = maximum((g.axis for g in s_explicit), init=-1)
         if exists(s_start_idx) && (max_explicit_axis >= s_start_idx)
-            raise_error_at(loc, inputs,
+            raise_parse_error(loc, inputs,
                            "Can't use '...' syntax at axis ", s_start_idx,
                              " when you explicitly list other axes up to ", max_explicit_axis)
         end
@@ -809,7 +809,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
     push!(inputs.op_stack_trace, "Rewrite rule `$expr`")
     try
         if !@capture(expr, lhsExpr_ => b_)
-            raise_error_at(loc, inputs, "Invalid format; expected `src => dest [modifiers]`")
+            raise_parse_error(loc, inputs, "Invalid format; expected `src => dest [modifiers]`")
         end
 
         # Strip out the modifiers.
@@ -849,7 +849,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
         elseif isnothing(maskExpr)
             nothing
         else
-            raise_error_at(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; got `%$maskExpr`")
+            raise_parse_error(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; got `%$maskExpr`")
         end
         (symmetries_explicit, symmetries_infinite_start) = parse_markovjunior_rewrite_rule_symmetry(inputs, loc, symmetryExprs)
 
@@ -859,7 +859,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
 
         # Post-process and validate the rule.
         if length(lhs) != length(rhs)
-            raise_error_at(loc, inputs,
+            raise_parse_error(loc, inputs,
                            "Source has ", length(lhs), " entries while Dest has ", length(rhs))
         end
         for i in 1:length(lhs)
@@ -868,7 +868,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
             if lhs[i] isa RewriteRuleCell_List
                 if rhs[i] isa RewriteRuleCell_List
                     if length(lhs[i]) != length(rhs[i])
-                        raise_error_at(loc, inputs,
+                        raise_parse_error(loc, inputs,
                                        "Destination Cell ", i, " is a list of ", length(rhs[i]),
                                        " elements, but its Source cell has ", length(lhs[i]),
                                        " elements instead")
@@ -886,12 +886,12 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
 
             # If dest cell is a list, the source cell must be too (at this point actually a Set).
             if (rhs[i] isa RewriteRuleCell_List) && !isa(lhs[i], RewriteRuleCell_Set)
-                raise_error_at(loc, inputs, "Destination Cell ", i, " is a list, but its Source cell is not!")
+                raise_parse_error(loc, inputs, "Destination Cell ", i, " is a list, but its Source cell is not!")
             end
 
             # If dest cell references a source cell, that reference must be valid.
             if (rhs[i] isa RewriteRuleCell_Lookup) && !in(rhs[i].source_idx, 1:length(lhs))
-                raise_error_at(loc, inputs,
+                raise_parse_error(loc, inputs,
                                "Destination Cell ", i, " references nonexistent source cell ",
                                  rhs[i].source_idx)
             end
@@ -924,11 +924,11 @@ function parse_markovjunior_rewrite_rules_strip(inputs::MacroParserInputs, loc, 
             if @capture(line, PRIORITIZE(args__))
                 with_parser_stacktrace(inputs, "PRIORITIZE(...)") do
                     if isempty(args)
-                        raise_error_at(loc, inputs, "Didn't provide a name!")
+                        raise_parse_error(loc, inputs, "Didn't provide a name!")
                     elseif exists(priority[])
-                        raise_error_at(loc, inputs, "Provided more than once!")
+                        raise_parse_error(loc, inputs, "Provided more than once!")
                     elseif !isa(args[1], Symbol)
-                        raise_error_at(loc, inputs, "The first argument isn't a name but a ", typeof(args[1]))
+                        raise_parse_error(loc, inputs, "The first argument isn't a name but a ", typeof(args[1]))
                     else
                         priority[] = parse_markovjunior_rewrite_priority(
                             Val(args[1]),
@@ -988,9 +988,9 @@ function parse_markovjunior_op(::Val{Symbol("@rewrite")},
             ()
         )
     elseif length(args) > 3
-        raise_error_at(nothing, inputs, "Should have 3 or fewer sections (threshold>rules>biases); got: ", args)
+        raise_parse_error(nothing, inputs, "Should have 3 or fewer sections (threshold>rules>biases); got: ", args)
     elseif length(args) < 1
-        raise_error_at(nothing, inputs, "Statement is empty; needs to at least have one rewrite rule!")
+        raise_parse_error(nothing, inputs, "Statement is empty; needs to at least have one rewrite rule!")
     end
 end
 
@@ -1010,7 +1010,7 @@ function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Everything,
 end
 function parse_markovjunior_rewrite_priority(::Val{:everything}, expr_args, inputs::MacroParserInputs)
     if !isempty(expr_args)
-        raise_error_at(nothing, inputs,
+        raise_parse_error(nothing, inputs,
                        "`everything` priority should have no arguments! Got ", length(expr_args))
     end
     return MarkovRewritePriority_Everything()
@@ -1030,7 +1030,7 @@ function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Fair,
 end
 function parse_markovjunior_rewrite_priority(::Val{:fair}, expr_args, inputs::MacroParserInputs)
     if !isempty(expr_args)
-        raise_error_at(nothing, inputs,
+        raise_parse_error(nothing, inputs,
                        "`fair` priority should have no arguments! Got ", length(expr_args))
     end
     return MarkovRewritePriority_Fair()
@@ -1051,7 +1051,7 @@ function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Earliest,
 end
 function parse_markovjunior_rewrite_priority(::Val{:earliest}, expr_args, inputs::MacroParserInputs)
     if !isempty(expr_args)
-        raise_error_at(nothing, inputs,
+        raise_parse_error(nothing, inputs,
                        "`earliest` priority should have no arguments! Got ", length(expr_args))
     end
     return MarkovRewritePriority_Earliest()
@@ -1072,7 +1072,7 @@ function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Latest,
 end
 function parse_markovjunior_rewrite_priority(::Val{:latest}, expr_args, inputs::MacroParserInputs)
     if !isempty(expr_args)
-        raise_error_at(nothing, inputs,
+        raise_parse_error(nothing, inputs,
                        "`latest` priority should have no arguments! Got ", length(expr_args))
     end
     return MarkovRewritePriority_Latest()
@@ -1097,7 +1097,7 @@ function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Common,
 end
 function parse_markovjunior_rewrite_priority(::Val{:common}, expr_args, inputs::MacroParserInputs)
     if !isempty(expr_args)
-        raise_error_at(nothing, inputs,
+        raise_parse_error(nothing, inputs,
                        "`common` priority should have no arguments! Got ", length(expr_args))
     end
     return MarkovRewritePriority_Common()
@@ -1122,7 +1122,7 @@ function pick_rule_using_rewrite_priority(::MarkovRewritePriority_Rare,
 end
 function parse_markovjunior_rewrite_priority(::Val{:rare}, expr_args, inputs::MacroParserInputs)
     if !isempty(expr_args)
-        raise_error_at(nothing, inputs,
+        raise_parse_error(nothing, inputs,
                        "`rare` priority should have no arguments! Got ", length(expr_args))
     end
     return MarkovRewritePriority_Rare()

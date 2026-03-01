@@ -202,7 +202,7 @@ function parse_markovjunior_sequence_main_block(expr, src,
                                                )::Vector{AbstractMarkovOp}
     function process_op(o_expr, i::Optional{Int})
         if !Base.isexpr(o_expr, :macrocall)
-            raise_error_at(src, inputs, "Operation isn't a macro-call: `", o_expr, "`")
+            raise_parse_error(src, inputs, "Operation isn't a macro-call: `", o_expr, "`")
         end
         (o_name, o_src, o_args...) = o_expr.args
 
@@ -222,7 +222,7 @@ function parse_markovjunior_sequence_main_block(expr, src,
         end
         return output
     else
-        raise_error_at(src, inputs,
+        raise_parse_error(src, inputs,
                        "Expected a block of operations; got `",
                        if expr isa Expr
                            tuple("`", expr.head, "` expression")
