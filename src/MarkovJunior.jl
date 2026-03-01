@@ -1,17 +1,19 @@
 "
 A reimplementation of [https://github.com/mxgmn/MarkovJunior](mxgmn/MarkovJunior).
 
+To run the GUI editor/player, simply call `markovjunior_run_tool()`.
+
+
 # Algorithm Definition
 
-Use `@markovjunior` to generate an algorithm instance,
-  or ``.
+Use `@markovjunior` to generate an algorithm instance.
 The following functions allow you to work with an instance:
 
 * `markov_algo_start` to start running it
 * `markov_algo_step` to update it
 * `markov_algo_is_finished` to check if it's done
-* `markov_algo_finish` to run all the way to the end
-* `markov_algo_grid` to read the current state of the grid.
+* `markov_algo_finish` to run all the way to the end (no timeout for infinite loops)
+* `markov_algo_grid` to read the current state of the grid
 
 ## Custom Ops
 
