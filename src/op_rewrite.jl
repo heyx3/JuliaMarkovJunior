@@ -897,6 +897,12 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
             end
         end
 
+        # If the rule has only one cell, remove all symmetries to avoid redundancy.
+        if length(rhs) == 1
+            symmetries_explicit = [ GridDir(1, 1) ]
+            symmetries_infinite_start = nothing
+        end
+
         return RewriteRule_Strip(
             Tuple(zip(lhs, rhs)),
             mask,

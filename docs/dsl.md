@@ -286,6 +286,9 @@ For example:
 end
 ````
 
+Note that in the case of single-pixel rewrite rules,
+  symmetries are automatically restricted to prevent many redundant matches.
+
 Symmetry axes put a lower-bound on the grid's dimensionality.
 In other words, if you mention a Z axis in any rule's symmetry
     then the whole algorithm cannot run on a 1D or 2D grid.
