@@ -22,14 +22,16 @@ path_local(name) = joinpath(LOCALS_PATH, name)
 
 const FONT_FILE_NAME = "FiraCode-VariableFont_wght.ttf"
 ASSET_BYTES_EDITOR_FONT_BUFFER::Vector{UInt8} = preallocated_vector(UInt8, 300*1024)
-push!(RUN_ON_INIT, () -> begin
-    @bp_check(isempty(ASSET_BYTES_EDITOR_FONT_BUFFER))
-    file_path = path_asset(FONT_FILE_NAME)
+function get_editor_font_bytes()
+    if isempty(ASSET_BYTES_EDITOR_FONT_BUFFER)
+        file_path = path_asset(FONT_FILE_NAME)
 
-    resize!(ASSET_BYTES_EDITOR_FONT_BUFFER, filesize(file_path))
-    open(io -> read!(io, ASSET_BYTES_EDITOR_FONT_BUFFER),
-         file_path, "r")
-end)
+        resize!(ASSET_BYTES_EDITOR_FONT_BUFFER, filesize(file_path))
+        open(io -> read!(io, ASSET_BYTES_EDITOR_FONT_BUFFER),
+             file_path, "r")
+    end
+    return ASSET_BYTES_EDITOR_FONT_BUFFER
+end
 
 "Contains the state of the UI, serialized to disk"
 const MEMORY_FILE_NAME = "UserSession.json"
