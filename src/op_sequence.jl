@@ -87,45 +87,62 @@ function markov_op_iterate(s::MarkovOpSequence, state::MarkovOpSequence_State,
             next_state = markov_op_iterate(sub_op, next_state, grid, rng, context, n_ticks_left)
         end
         if exists(next_state)
-            logic_logln("Couldn't finish the sub-op")
+            logic_logln("    Couldn't finish the sub-op")
         else
-            logic_logln("Finished the sub-op!")
+            logic_logln("    Finished the sub-op!")
         end
         return next_state
     end
     b_infinite_ticks = Val(isnothing(n_ticks_left[]))
 
-    # Nest the sequence logic in a loop to handle repetitions.
-    repeat_sequence_logic::Bool = true
-    while repeat_sequence_logic
-        repeat_sequence_logic = false
+    @markovjunior_assert exists(state.current_op_state) "Iterating on a non-running Sequence!?"
 
+    # Nest the sequence logic in a loop to handle repetitions and insta-quitting ops.
+    while get_something(n_ticks_left[], 1) > 0
         # Advance the current sub-op.
-        @markovjunior_assert exists(state.current_op_state) "Iterating on a non-running Sequence!?"
-        @set! state.current_op_state = run_sub_op(
-            s.ops[state.current_op_idx], state.current_op_state,
-            state.current_op_idx, b_infinite_ticks
-        )
-
-        # Keep advancing until they all finish or we run out of ticks.
-        while isnothing(state.current_op_state) && (state.current_op_idx < length(s.ops)) &&
-            (get_something(n_ticks_left[], 1) > 0)
-        #begin
-            state = MarkovOpSequence_State(
-                state.repetitions_left,
-                let new_idx = state.current_op_idx + 1
-                    new_state = markov_op_initialize(s.ops[new_idx], grid, rng, context)
-                    (new_idx, run_sub_op(s.ops[new_idx], new_state, new_idx, b_infinite_ticks))
-                end...
+        if exists(state.current_op_state)
+            logic_logln("Running sub-op ", state.current_op_idx, "...")
+            logic_tab_in()
+            @set! state.current_op_state = run_sub_op(
+                s.ops[state.current_op_idx], state.current_op_state,
+                state.current_op_idx, b_infinite_ticks
             )
+            logic_tab_out()
         end
 
-        # If all ops finished, handle repetition logic.
-        if isnothing(state.current_op_state) && (state.current_op_idx >= length(s.ops))
+        # If it ended, advance to the next one (until we find one that can actually run).
+        while isnothing(state.current_op_state) && (state.current_op_idx < length(s.ops))
+            logic_logln("Advancing to the next sub-op...")
+            logic_tab_in()
+            state = MarkovOpSequence_State(
+                state.repetitions_left,
+                state.current_op_idx + 1,
+                markov_op_initialize(s.ops[state.current_op_idx + 1], grid, rng, context)
+            )
+            logic_tab_out()
+            if isnothing(state.current_op_state)
+                logic_logln("...and that sub-op failed to do anything.")
+            end
+        end
+
+        # If we advanced through all ops, repeat or quit.
+        if isnothing(state.current_op_state)
+            logic_logln("Finished one repetition of this sequence!")
             if state.repetitions_left == 0
+                logic_logln("   Now this sequence is complete.")
                 markov_op_cancel(s, state, context)
                 return nothing
             else
+                logic_logln("Starting first op again with ",
+                            if state.repetitions_left isa Int
+                                state.repetitions_left
+                            elseif state.repetitions_left isa SequenceRepeatModeTag
+                                "indefinite"
+                            else
+                                error("Unhandled: ", typeof(state.repetitions_left))
+                            end,
+                            " repetitions remaining")
+                logic_tab_in()
                 state = MarkovOpSequence_State(
                     if state.repetitions_left isa Int
                         state.repetitions_left - 1
@@ -136,21 +153,22 @@ function markov_op_iterate(s::MarkovOpSequence, state::MarkovOpSequence_State,
                     end,
                     1, markov_op_initialize(s.ops[1], grid, rng, context)
                 )
+                logic_tab_out()
 
-                # Initial state failure means we either
-                #   move on to the next one or end the sequence, based on our settings.
-                if isnothing(state.current_op_state)
-                    if state.repetitions_left isa SequenceRepeatModeTag
-                        markov_op_cancel(s, state, context)
-                        return nothing
-                    else
-                        repeat_sequence_logic = true
-                    end
+                # If the first op failed to match and we're using the 'repeat' threshold, we're done.
+                if (state.repetitions_left isa SequenceRepeatModeTag) && isnothing(state.current_op_state)
+                    logic_logln("The first op failed to start and we're in indefinite 'repeat' mode, so we're done!")
+                    markov_op_cancel(s, state, context)
+                    return nothing
                 end
             end
         end
     end
 
+    @markovjunior_assert(
+        exists(state.current_op_state),
+        "Finished an iteration of @sequence without ending, but also without a running Op!"
+    )
     return state
 end
 
