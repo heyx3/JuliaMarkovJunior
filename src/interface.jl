@@ -31,28 +31,28 @@ function markov_op_iterate(op::AbstractMarkovOp, state,
                            grid::CellGrid, rng::PRNG,
                            context::MarkovOpContext, n_ticks_left::Ref{Optional{Int}}
                           )::Optional
-    logic_logln("Running ", exists(n_ticks_left[]) ? n_ticks_left[] : "infinite",
+    @logic_logln("Running ", exists(n_ticks_left[]) ? n_ticks_left[] : "infinite",
                 "individual ticks on ", typeof(op), " this iteration...")
-    logic_tab_in()
+    @logic_tab_in()
     if isnothing(n_ticks_left[])
         while exists(state)
             state = markov_op_iterate(op, state, grid, rng, context)
         end
-        logic_tab_out()
+        @logic_tab_out()
         return nothing
     else
         while n_ticks_left[] > 0 && exists(state)
             state = markov_op_iterate(op, state, grid, rng, context)
             n_ticks_left[] -= 1
         end
-        logic_tab_out()
+        @logic_tab_out()
         return state
     end
 end
 
 "Called if the algorithm stops running early. This gives you a chance to clean up allocations"
 markov_op_cancel(op::AbstractMarkovOp, state, context::MarkovOpContext) = begin
-    logic_logln("Default-Canceling ", typeof(op))
+    @logic_logln("Default-Canceling ", typeof(op))
     nothing
 end
 

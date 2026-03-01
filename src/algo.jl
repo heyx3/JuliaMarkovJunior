@@ -5,24 +5,52 @@
 log_logic() = false
 
 LOG_LOGIC_TAB::String = ""
-@inline logic_tab_in() = log_logic() && (global LOG_LOGIC_TAB *= "    ")
-@inline logic_tab_out() = log_logic() && (global LOG_LOGIC_TAB = LOG_LOGIC_TAB[5:end])
-
-@inline logic_log(args...) = if log_logic()
-    foreach(args) do arg
-        if arg isa String
-            arg = replace(arg, "\n"=>"\n$LOG_LOGIC_TAB")
-        elseif arg == '\n'
-            arg = "\n$LOG_LOGIC_TAB"
-        else
-            arg = replace(string(arg), "\n"=>"\n$LOG_LOGIC_TAB")
+macro logic_tab_in()
+    MJ = @__MODULE__
+    return quote
+        if $log_logic()
+            $MJ.LOG_LOGIC_TAB::String *= "    "
         end
-        print(stderr, arg)
+        nothing
     end
-else
-    nothing
 end
-@inline logic_logln(args...) = logic_log(args..., '\n')
+macro logic_tab_out()
+    MJ = @__MODULE__
+    return quote
+        if $log_logic()
+            $MJ.LOG_LOGIC_TAB = $MJ.LOG_LOGIC_TAB[5:end]
+        end
+        nothing
+    end
+end
+
+macro logic_log(args...)
+    MJ = @__MODULE__
+    return quote
+        if $log_logic()
+            foreach(tuple( $(esc.(args)...)) ) do arg
+                if arg isa String
+                    arg = replace(arg, "\n"=>"\n$($MJ.LOG_LOGIC_TAB)")
+                elseif arg == '\n'
+                    arg = "\n$($MJ.LOG_LOGIC_TAB)"
+                else
+                    arg = replace(string(arg), "\n"=>"\n$($MJ.LOG_LOGIC_TAB)")
+                end
+                print(stderr, arg)
+            end
+        end
+        nothing
+    end
+end
+macro logic_logln(args...)
+    MJ = @__MODULE__
+    return :(
+        $MJ.@logic_log(
+            $(esc.(args)...),
+            '\n'
+        )
+    )
+end
 
 
 ##################
@@ -169,7 +197,7 @@ function markov_algo_start(algo::MarkovAlgorithm,
         rng,
         Ref{Optional{Int}}()
     )
-    logic_logln("Started an algorithm run with seeds ", seeds)
+    @logic_logln("Started an algorithm run with seeds ", seeds)
     return state
 end
 
@@ -182,13 +210,13 @@ function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_itera
         state.buffer_iter_count[] = convert(Int, n_iterations)
     end
 
-    logic_logln("Next tick of the algorithm will run ",
+    @logic_logln("Next tick of the algorithm will run ",
                   exists(state.buffer_iter_count[]) ?
                       state.buffer_iter_count[] :
                       "infinite",
                   " iterations")
 
-    logic_tab_in()
+    @logic_tab_in()
     while !markov_algo_is_finished(algo, state) && (isnothing(state.buffer_iter_count[]) || state.buffer_iter_count[] > 0)
         # Note that when starting the algorithm, op_idx is 0 and op_state is initialized to nothing.
         if exists(state.op_state)
@@ -203,25 +231,25 @@ function markov_algo_step(algo::MarkovAlgorithm, state::MarkovAlgoState, n_itera
                                    "*added* ", -n_op_ticks, " to n_ticks_left??")
             state.n_iterations += n_op_ticks
 
-            logic_logln("Completed ", n_op_ticks, " iterations, totaling ", state.n_iterations)
+            @logic_logln("Completed ", n_op_ticks, " iterations, totaling ", state.n_iterations)
         end
 
         if isnothing(state.op_state)
-            logic_logln("Moving on to the next top-level op!")
+            @logic_logln("Moving on to the next top-level op!")
             state.op_idx += 1
-            logic_tab_in()
+            @logic_tab_in()
             if state.op_idx <= length(algo.sequence)
-                logic_logln(typeof(algo.sequence[state.op_idx]))
+                @logic_logln(typeof(algo.sequence[state.op_idx]))
                 state.op_state = markov_op_initialize(algo.sequence[state.op_idx], state.grid,
                                                       state.rng, state.op_context)
-                logic_logln("Initial state:\n  ", state.op_state)
+                @logic_logln("Initial state:\n  ", state.op_state)
             else
-                logic_logln("No more ops left. This algo run is about to end")
+                @logic_logln("No more ops left. This algo run is about to end")
             end
-            logic_tab_out()
+            @logic_tab_out()
         end
     end
-    logic_tab_out()
+    @logic_tab_out()
 
     return nothing
 end
@@ -232,14 +260,14 @@ Releases all allocations of the MarkovAlgoState back to its allocator;
   remember to call this when you're done with the algorithm state!
 "
 function Base.close(s::MarkovAlgoState, owning_algo::MarkovAlgorithm)
-    logic_logln("Closing algo for ", vsize(s.grid[]))
-    logic_tab_in()
+    @logic_logln("Closing algo for ", vsize(s.grid[]))
+    @logic_tab_in()
     if !markov_algo_is_finished(owning_algo, s) && markov_algo_is_started(owning_algo, s)
         markov_op_cancel(owning_algo.sequence[s.op_idx], s.op_state, s.op_context)
     end
     markov_allocator_release_array(s.allocator, s.grid[])
     markov_allocator_release_array(s.allocator, s.op_context.all_biases)
-    logic_tab_out()
+    @logic_tab_out()
     return nothing
 end
 

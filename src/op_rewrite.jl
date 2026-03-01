@@ -162,27 +162,27 @@ function RewriteCache(grid::CellGrid{NDims}, mask_grid::Optional{MaskGrid{NDims}
                      ) where {NDims, NRules}
     whole_grid_range = Box(min=one(CellIdx{NDims}), max=vsize(grid))
 
-    logic_logln("Caching valid rule applications...")
-    logic_tab_in()
+    @logic_logln("Caching valid rule applications...")
+    @logic_tab_in()
     applications_tuple = map(rules, mask_for_each_rule) do rule, mask
         set = markov_allocator_acquire_ordered_set(context.allocator, Tuple{CellIdx{NDims}, GridDir})
         empty!(set)
 
-        logic_logln("Masked ", mask, ", rule ", rules)
-        logic_tab_in()
+        @logic_logln("Masked ", mask, ", rule ", rules)
+        @logic_tab_in()
         visit_rule_match_data(rule, grid, mask_grid, mask, whole_grid_range) do cell, dir, is_matching
             if is_matching
-                logic_log("   ", cell, " along ", dir.axis, "|", (dir.sign > 0 ? "+" : ""), dir.sign)
+                @logic_log("   ", cell, " along ", dir.axis, "|", (dir.sign > 0 ? "+" : ""), dir.sign)
                 push!(set, (cell, dir))
             end
             return nothing
         end
-        logic_logln()
-        logic_tab_out()
+        @logic_logln()
+        @logic_tab_out()
         return set
     end
-    logic_logln("Total candidates: ", sum(map(length, applications_tuple), init=0))
-    logic_tab_out()
+    @logic_logln("Total candidates: ", sum(map(length, applications_tuple), init=0))
+    @logic_tab_out()
 
     applications = markov_allocator_acquire_array(
         context.allocator,
@@ -365,13 +365,13 @@ function markov_op_initialize(r::MarkovOpRewrite1D{<:NTuple{NRules, RewriteRule_
         markov_allocator_acquire_array(context.allocator, tuple(NRules), RewriteGroupDesirability)
     )
     if all(isempty, cache.applications)
-        logic_logln("MarkovOpRewrite1D has no options at the start; canceling...")
+        @logic_logln("MarkovOpRewrite1D has no options at the start; canceling...")
         markov_op_cancel(r, out_state, context)
         return nothing
     else
-        logic_logln("MarkovOpRewrite1D has been initialized; there are ",
+        @logic_logln("MarkovOpRewrite1D has been initialized; there are ",
                       sum(map(length, cache.applications), init=0), " initial options")
-        logic_logln("The actual threshold is ",
+        @logic_logln("The actual threshold is ",
                       typeof(out_state.applications_left), "(", out_state.applications_left, ")")
         return out_state
     end
@@ -384,7 +384,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases, TPriority},
                           ) where {NDims, NRules, TGrid, TRules, TPriority,
                                    NBiases, TFullBias, TBiasStates, TSelfBiases}
     @markovjunior_assert(get_something(state.applications_left, 1) > 0)
-    logic_logln("Remaining threshold for this rewrite op: ",
+    @logic_logln("Remaining threshold for this rewrite op: ",
                 get_something(state.applications_left, "infinity"))
 
     while isnothing(ticks_left[]) || (ticks_left[] > 0)
@@ -425,7 +425,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases, TPriority},
         end
         state.weighted_options_buffer_first_indices[NRules+1] = 1 + length(state.weighted_options_buffer)
 
-        logic_logln("There are ", length(state.weighted_options_buffer),
+        @logic_logln("There are ", length(state.weighted_options_buffer),
                       " options with biases ranging from ",
                       state.weight_data_buffer.min, " to ", state.weight_data_buffer.max)
 
@@ -438,15 +438,15 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases, TPriority},
         # Pick a rule using the chosen Priority.
         # Interpret an invalid choice as "no options left".
         pick_rule_i = pick_rule_using_rewrite_priority(r.priority, r, state, rng, context)
-        logic_logln("Chose rule ", pick_rule_i)
+        @logic_logln("Chose rule ", pick_rule_i)
         if !in(pick_rule_i, 1:NRules)
-            logic_logln("Invalid rule index! This is the end of the Op.")
+            @logic_logln("Invalid rule index! This is the end of the Op.")
             markov_op_cancel(r, state, context)
             return nothing
         end
         pick_options_range = rewrite_rule_option_indices(state, pick_rule_i)
         if isempty(pick_options_range)
-            logic_logln("Rule has no options! This is the end of the Op.")
+            @logic_logln("Rule has no options! This is the end of the Op.")
             markov_op_cancel(r, state, context)
             return nothing
         end
@@ -461,7 +461,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases, TPriority},
         (pick_start_cell, pick_dir) =
            # If all weights are equal then we can use use trivial uniform-random selection.
           if rule_desirability_data.min == rule_desirability_data.max
-            logic_logln("Luckily we can use uniform-random selection, which is much faster")
+            @logic_logln("Luckily we can use uniform-random selection, which is much faster")
             choice = rand(rng, picked_options)
             (choice.start_cell, choice.dir)
           else
@@ -472,7 +472,7 @@ function markov_op_iterate(r::MarkovOpRewrite1D{TRules, TSelfBiases, TPriority},
             ]
             (picked_option.start_cell, picked_option.dir)
         end
-        logic_logln("Decided to apply the rule at ", pick_start_cell, " along ", pick_dir)
+        @logic_logln("Decided to apply the rule at ", pick_start_cell, " along ", pick_dir)
 
         # Apply the rule.
         # Because each rule is a different type but known at compile-time,
