@@ -1,18 +1,18 @@
 # `@markovjunior` DSL syntax
 
+Below is a comprehensive reference for the syntax to define a MarkovJunior algorithm.
+If you're feeling overwhelmed, maybe just read the example scenes
+  and come back here periodically to clarify.
+
 The new Julia macro `@markovjunior [dims] [clear_value] begin ... end`
-  evaluates into an instance of `ParsedMarkovAlgorithm`.
+  evaluates into an instance of `MarkovAlgorithm`.
 This represents a sequence of operations that generate a grid of colored pixels,
   in any dimension (most commonly 2 for images and 3 for voxel scenes).
-You could also think of it as generating an *animation*,
-  which takes us from a blank grid to an image/scene.
+You could also think of it as defining an *animation*,
+  which transforms a blank grid into an image/scene.
 
-You can turn a parsed algorithm back into a DSL string with `dsl_string(pma)`.
-However the result looks a lot worse than the original -- whitespace and comments are lost!
-
-Below is a comprehensive reference for the macro syntax.
-If you're feeling overwhelemed, maybe just read the example scenes
-  and come back here periodically to clarify.
+Turn a parsed algorithm back into a DSL string with `dsl_string(algo)`.
+However the result looks much worse than the original -- whitespace, comments and other niceties are lost!
 
 Keep in mind for convenience, Julia macros (code statements with the `@` symbol) can be written two ways:
 * Without parentheses and commas to make statements shorter, `@my_macro a b c`
@@ -20,7 +20,7 @@ Keep in mind for convenience, Julia macros (code statements with the `@` symbol)
 If using the former, there are a few expressions you must keep in parentheses
   which will be mentioned as they come up.
 
-> ***Important note**: Julia uses 1-based indices! Our syntax uses 1-based indices too; for example the first axis is 1.*
+> ***Important note**: Julia uses 1-based indices, and so does our library! For example the first grid axis is 1 and not 0.*
 
 ## Parameters
 
@@ -40,7 +40,7 @@ For example:
 
 ````julia
 @markovjunior begin
-    @pragma viz 2     # Notes to the interpreter (for example, our tool can be told how to visualize it by default)
+    @pragma viz 2     # Special notes to the interpreter, no effect on the core algorithm
     @sequence (length/12) begin    # Do this a few times, proportional to grid length
         @rewrite 1  b => R         # Place a single red pixel somewhere in the image
         @rewrite Rbb => RwR        # Randomly connect new pathways to the red pixel
