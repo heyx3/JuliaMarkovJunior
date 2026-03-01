@@ -84,7 +84,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 )
             ),
             nothing,
@@ -114,7 +114,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 )
             ),
             3,
@@ -128,7 +128,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['R'], MJ.RewriteRuleCell_Wildcard())
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 )
             ),
             MJ.ThresholdByArea(0.5f0),
@@ -142,7 +142,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.RewriteRuleCell_Wildcard(), MJ.CELL_CODE_BY_CHAR['R'])
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 )
             ),
             MJ.ThresholdByArea(2.0f0),
@@ -238,7 +238,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
                     ),
                     0.1f0, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 )
             ),
             MJ.ThresholdByLength(4.0f0),
@@ -252,7 +252,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
                     ),
                     0.2f0, 3.5f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 )
             ),
             MJ.ThresholdRange(2, 10),
@@ -266,7 +266,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
                     ),
                     0.3f0, convert(Float32, 1 / 4.1),
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 )
             ),
             nothing,
@@ -352,7 +352,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                 ),
                 MJ.RewriteRule_Strip(
                     tuple(
@@ -421,7 +421,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                                 (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['b'])
                             ),
                             nothing, 1.0f0,
-                            MJ.GridDir[ ], 0
+                            MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                         )
                     ),
                     10,
@@ -443,7 +443,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                                 (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['R'])
                             ),
                             nothing, 1.0f0,
-                            MJ.GridDir[ ], 0
+                            MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                         )
                     ),
                     10,
@@ -465,7 +465,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                                 (MJ.CELL_CODE_BY_CHAR['R'], MJ.CELL_CODE_BY_CHAR['G'])
                             ),
                             nothing, 1.0f0,
-                            MJ.GridDir[ ], 0
+                            MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                         )
                     ),
                     nothing,
@@ -479,14 +479,14 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                                 (MJ.CELL_CODE_BY_CHAR['G'], MJ.CELL_CODE_BY_CHAR['B'])
                             ),
                             nothing, 1.0f0,
-                            MJ.GridDir[ ], 0
+                            MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                         ),
                         MJ.RewriteRule_Strip(
                             tuple(
                                 (MJ.CELL_CODE_BY_CHAR['G'], MJ.CELL_CODE_BY_CHAR['Y'])
                             ),
                             nothing, 2.0f0,
-                            MJ.GridDir[ ], 0
+                            MJ.GridDir[ MJ.GridDir(1, 1) ], nothing
                         )
                     ),
                     nothing,
