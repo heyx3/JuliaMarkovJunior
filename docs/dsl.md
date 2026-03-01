@@ -1,5 +1,3 @@
-> *NOTE: this is not the syntax as it currently appears in the project, but the new replacement I've planned.*
-
 # `@markovjunior` DSL syntax
 
 The new Julia macro `@markovjunior [dims] [clear_value] begin ... end`
@@ -623,5 +621,3 @@ However if you add an ellipsis to the end, then those extra axes all take on the
 For example `@downscale (2...)` will halve the size along all axes.
 
 **TODO: Finish**
-
-# TODO: Convolution, Path, Tiled WFC, Overlap WFC

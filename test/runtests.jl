@@ -76,7 +76,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
     ],
 
     [
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -90,7 +90,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             nothing,
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -106,7 +106,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             nothing,
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -120,7 +120,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             3,
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -134,7 +134,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             MJ.ThresholdByArea(0.5f0),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -148,7 +148,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             MJ.ThresholdByArea(2.0f0),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -165,7 +165,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
 
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -190,7 +190,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             MJ.ThresholdByArea(1.5f0),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -206,7 +206,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             MJ.ThresholdByLength(0.5f0),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -230,7 +230,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
 
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -244,7 +244,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             MJ.ThresholdByLength(4.0f0),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -258,7 +258,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             MJ.ThresholdRange(2, 10),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -273,7 +273,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
 
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -291,7 +291,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -309,7 +309,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ),
             ()
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -326,7 +326,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                 MJ.MarkovBiasTemperature(0.2)
             )
         ),
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
                 MJ.RewriteRule_Strip(
@@ -344,7 +344,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             )
         ),
 
-        MJ.MarkovOpRewrite1D(
+        MJ.MarkovOpRewrite(
             MJ.MarkovRewritePriority_Rare(),
             tuple(
                 MJ.RewriteRule_Strip(
@@ -413,7 +413,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
 
         MJ.MarkovOpSequence(
             MJ.AbstractMarkovOp[
-                MJ.MarkovOpRewrite1D(
+                MJ.MarkovOpRewrite(
                     DEFAULT_PRIORITY,
                     tuple(
                         MJ.RewriteRule_Strip(
@@ -435,7 +435,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         ),
         MJ.MarkovOpSequence(
             MJ.AbstractMarkovOp[
-                MJ.MarkovOpRewrite1D(
+                MJ.MarkovOpRewrite(
                     DEFAULT_PRIORITY,
                     tuple(
                         MJ.RewriteRule_Strip(
@@ -457,7 +457,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
         ),
         MJ.MarkovOpSequence(
             MJ.AbstractMarkovOp[
-                MJ.MarkovOpRewrite1D(
+                MJ.MarkovOpRewrite(
                     DEFAULT_PRIORITY,
                     tuple(
                         MJ.RewriteRule_Strip(
@@ -471,7 +471,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                     nothing,
                     ()
                 ),
-                MJ.MarkovOpRewrite1D(
+                MJ.MarkovOpRewrite(
                     MJ.MarkovRewritePriority_Earliest(),
                     tuple(
                         MJ.RewriteRule_Strip(
@@ -560,7 +560,7 @@ function test_compare(a::MJ.MarkovOpDrawBox, b::MJ.MarkovOpDrawBox, tab::String)
         println(tab, "Fails to match via == operator!")
     end
 end
-function test_compare(a::MJ.MarkovOpRewrite1D, b::MJ.MarkovOpRewrite1D, tab::String)
+function test_compare(a::MJ.MarkovOpRewrite, b::MJ.MarkovOpRewrite, tab::String)
     if length(a.rules) != length(b.rules)
         println(tab, "A has ", length(a.rules), " rules while B has ", length(b.rules), "!")
     else

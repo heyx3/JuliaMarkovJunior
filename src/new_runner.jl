@@ -18,7 +18,7 @@ function main()
                 ],
                 AbstractMarkovOp[
                     # @rewrite 1 b=>w
-                    MarkovOpRewrite1D(
+                    MarkovOpRewrite(
                         tuple(
                             RewriteRule_Strip(
                                 tuple(
@@ -35,7 +35,7 @@ function main()
                         )
                     ),
                     # @rewrite wbb => wgw
-                    MarkovOpRewrite1D(
+                    MarkovOpRewrite(
                         tuple(
                             RewriteRule_Strip(
                                 tuple(
@@ -54,7 +54,7 @@ function main()
                         )
                     ),
                     # @rewrite [wg] => w
-                    MarkovOpRewrite1D(
+                    MarkovOpRewrite(
                         tuple(
                             RewriteRule_Strip(
                                 tuple(
