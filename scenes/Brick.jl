@@ -1,108 +1,85 @@
 @markovjunior 'b' 2 begin
     # Mark the min corner.
-    @fill 'B' min=0 size=0
+    @fill 'B' uv(min=0, size=0)
+    # Pick an "across-brick" axis (ideally vertical but let's make it axis-agnostic for fun).
+    @rewrite 1 Bbb => BYY
 
-    # Pick an "across-brick" axis (ideally vertical but whatever).
-    @do_n 1 begin
-        @rule Bbb => BYY
-    end
     # Mark the rows where each brick line starts.
-    @do_all begin
-        @rule YYbbbbbbb => GGGGGGRYY
-        @rule YYbbbbbbbbb => GGGGGGGGRYY
+    @rewrite begin
+        YYbbbbbbb   => GGGGGGRYY
+        YYbbbbbbbbb => GGGGGGGGRYY
     end
     # Push the marker to the end of the across-brick axis.
-    @do_all begin
-        @sequential
-        @rule YYb => GYY
-        @rule YY => GG
+    @rewrite begin
+        PRIORITIZE(earliest)
+        YYb => GYY
+        YY => GG
     end
     # Draw out each row.
-    @do_all begin
-        @sequential
-        @rule Bbb => BYY
-        @rule Rbb => RYY
-        @rule YYb => IYY
-        @rule YY => II
+    @rewrite begin
+        PRIORITIZE(earliest)
+        Bbb => BYY
+        Rbb => RYY
+        YYb => IYY
+        YY => II
     end
 
     # Now fully draw out each row, starting with the first.
-    @block repeat begin
-        @do_all begin
-            @rule BII => BYY
-        end
+    @sequence repeat begin
+        @rewrite BII => BYY
         # As it's drawn out, insert column markers for the bricks underneath.
-        @do_all begin
-            @rule YYIIIIIIIIIII => TTTTTTTTTTMYY
-            @rule YYIIIIIIIIIIIII => TTTTTTTTTTTTMYY
-            @rule YYIIIIIIIIIIIIIII => TTTTTTTTTTTTTTMYY
+        @rewrite begin
+            YYIIIIIIIIIII     => TTTTTTTTTTMYY
+            YYIIIIIIIIIIIII   => TTTTTTTTTTTTMYY
+            YYIIIIIIIIIIIIIII => TTTTTTTTTTTTTTMYY
         end
-        @do_all begin
-            @sequential
-            @rule YYI => TYY
-            @rule YY => TT
-        end
+        @rewrite YYI => TYY
+        @rewrite YY => TT
 
         # Draw downward to the next row.
         #   1. Start with the min edge, and mark the row below it to eventually go through this same process.
-        @do_all begin
-            @rule BGG => OYY
-        end
-        @do_all begin
-            @sequential
-            @rule YYG => OYY
-            @rule YYR => OOB
-            @rule YY => OO # At the bottom of the grid there is no other row to process
+        @rewrite BGG => OYY
+        @rewrite begin
+            PRIORITIZE(earliest)
+            YYG => OYY
+            YYR => OOB
+            YY => OO # At the bottom of the grid there is no other row to process
         end
         #   2. Draw the rest of the column markers down.
-        @do_all begin
-            @sequential
-            @rule Mbb => TYY
-            @rule YYb => PYY
-            @rule YY => PP
-        end
+		@rewrite Mbb => TYY
+		@rewrite YYb => PYY
+		@rewrite YY => PP
         #   3. Fill in the bricks.
-        @do_all begin
-            @sequential
-            @rule YYb => LYY
-            @rule YY => LL
-            @rule Tbb => TYY
+        @rewrite begin
+            PRIORITIZE(earliest)
+            YYb => LYY
+            YY => LL
+            Tbb => TYY
         end
     end
 
     # Finalize the colors!
-    @do_all begin
-        # Start with larger lines to speed up the process.
-        @sequential
-
-        @rule OOOO => TTTT
-        @rule OOO => TTT
-        @rule OO => TT
-        @rule O => T
-
-        @rule TTTTTTTT => wwwwwwww
-        @rule TTTTTTT  => wwwwwww
-        @rule TTTTTT   => wwwwww
-        @rule TTTTT    => wwwww
-        @rule TTTT     => wwww
-        @rule TTT      => www
-        @rule TT       => ww
-        @rule T        => w
-
-        @rule PPPP => gggg
-        @rule PPP  => ggg
-        @rule PP   => gg
-        @rule P    => g
-
-        @rule LLLLLLLLLL => RRRRRRRRRR
-        @rule LLLLLLLLL => RRRRRRRRR
-        @rule LLLLLLLL => RRRRRRRR
-        @rule LLLLLLL => RRRRRRR
-        @rule LLLLLL => RRRRRR
-        @rule LLLLL => RRRRR
-        @rule LLLL => RRRR
-        @rule LLL => RRR
-        @rule LL => RR
-        @rule L => R
-    end
+    # Start with larger lines to speed up the process.
+    @rewrite OOOO => TTTT
+    @rewrite OOO => TTT
+    @rewrite OO => TT
+    @rewrite O => T
+	@rewrite TTTTTTTT => wwwwwwww
+	@rewrite TTTTTTT => wwwwwww
+	@rewrite TTTTTT => wwwwww
+	@rewrite TTTTT => wwwww
+	@rewrite TTTT => wwww
+	@rewrite TTT => www
+	@rewrite TT => ww
+	@rewrite T => w
+	@rewrite PPPP => gggg
+	@rewrite PPP => ggg
+	@rewrite PP => gg
+	@rewrite P => g
+	@rewrite LLLLLLLLLL => RRRRRRRRRR
+	@rewrite LLLLLLLL => RRRRRRRR
+	@rewrite LLLLLL => RRRRRR
+	@rewrite LLLL => RRRR
+	@rewrite LL => RR
+	@rewrite L => R
 end
