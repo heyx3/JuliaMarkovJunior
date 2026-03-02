@@ -629,7 +629,7 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
                         min=v2f(0, 0),
                         size=v2f(15, 15)
                     ), true),
-                    GuiDrawColorFilled(color)
+                    GuiDrawFilled(color)
                 )
                 CImGui.SameLine()
                 CImGui.Text(text)
