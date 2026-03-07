@@ -1,7 +1,7 @@
 module Render3D
 
-using Setfield
-
+using Setfield, CSyntax
+using CImGui
 using Bplus
 @using_bplus
 
@@ -79,12 +79,19 @@ mutable struct Scene
     grid_buffer_3D::CellGridConcrete{3}
 
     air_cells::CellTypeSet
-    #TODO: Sun, Floor, Sky, Fog, Per-pixel Materials
+    sun_color_hdr::v3f
+    sun_dir::v3f
+    sun_dir_gui_buffer::Ref{Float32}
+    #TODO: Floor, Sky, Fog, Per-pixel Materials
+
+    # sun_shadowmap::Texture
+    # sun_shadowmap_projection::fmat4x4
 
     old_textures::Vector{Pair{Texture, Int}} # Elements are cleaned up after X frames,
                                              #   to prevent crashes from Dear ImGUI trying to draw with it.
 end
-function Scene()
+function Scene(; sun_dir::v3f = norm(v3f(1, -1, -1)),
+                 sun_color::v3f = v3f(1, 1, 1))
     return Scene(
         Texture(
             SimpleFormat(FormatTypes.uint, SimpleFormatComponents.R, SimpleFormatBitDepths.B8),
@@ -97,6 +104,8 @@ function Scene()
         fill(zero(UInt8), 1, 1, 1),
 
         CellTypeSet('b'),
+        sun_color, sun_dir,
+        Ref{Float32}(0),
 
         Vector{Pair{Texture, Int}}()
     )
@@ -126,6 +135,7 @@ function update_scene_grid!(scene::Scene, new_grid_view::CellGrid{3})
 end
 
 function tick_scene!(scene::Scene, delta_seconds::Float32)
+    # Clean up old resources.
     i = length(scene.old_textures)
     while i > 0
         if (scene.old_textures[i][2] < 1)
@@ -137,6 +147,20 @@ function tick_scene!(scene::Scene, delta_seconds::Float32)
         i -= 1
     end
 
+end
+
+"Runs some Dear ImGUI widgets to edit this scene's settings"
+function scene_settings_gui!(scene::Scene)
+    CImGui.Separator(); CImGui.SameLine(30); CImGui.Text("Sun")
+    @c CImGui.ColorEdit3("Color##Sun", &scene.sun_color_hdr,
+        CImGui.LibCImGui.ImGuiColorEditFlags_HDR |
+          CImGui.LibCImGui.ImGuiColorEditFlags_Float
+    )
+    gui_with_item_width(100) do
+        scene.sun_dir = gui_spherical_vector("Direction##Sun", scene.sun_dir,
+                                             stays_normalized=true,
+                                             fallback_yaw=scene.sun_dir_gui_buffer)
+    end
 end
 
 
@@ -152,6 +176,8 @@ mutable struct Viewport
     view_color::Texture
     view_depth::Texture
     view_target::Target
+    view_target_outputs_depth_only::Vector{Optional{Int}}
+    view_target_outputs_forward::Vector{Optional{Int}}
 
     upload_data::UboData
     upload_buffer::Buffer
@@ -181,6 +207,8 @@ function Viewport(resolution::Vec2{<:Integer}, start_pos::Vec3)
                 view_color, view_depth,
                 Target(TargetOutput(tex=view_color), TargetOutput(tex=view_depth)))
         end...,
+        Optional{Int}[ ],
+        Optional{Int}[ 1 ],
 
         UboData(), Buffer(true, UboData)
     )
@@ -201,6 +229,25 @@ function on_new_grid!(viewport::Viewport, new_grid_size::Vec3{<:Integer})
     return nothing
 end
 
+"Runs some Dear ImGUI widgets to edit this viewport's settings"
+function viewport_settings_gui!(viewport::Viewport, scene::Scene)
+    CImGui.Separator(); CImGui.SameLine(30); CImGui.Text("Camera")
+    viewport.cam = let c = viewport.cam
+        p = c.pos
+        @c CImGui.DragFloat3("Pos##Camera", &p, 1.0)
+        @set! c.pos = p
+
+        f = c.forward
+        f = gui_with_item_width(100) do
+            gui_spherical_vector("Direction##Camera", f,
+                                 stays_normalized=true)
+        end
+        @set! c.forward = f
+
+        c
+    end
+end
+
 function render(app::App, scene::Scene, view::Viewport)
     # Generate the UBO data.
     view.upload_data.cam_pos = view.cam.pos
@@ -209,8 +256,8 @@ function render(app::App, scene::Scene, view::Viewport)
         cam_view_mat(view.cam),
         cam_projection_mat(view.cam)
     )
-    view.upload_data.sun_dir = vnorm(v3f(-1, 1, -1))
-    view.upload_data.sun_color = v3f(1, 1, 1)
+    view.upload_data.sun_dir = scene.sun_dir
+    view.upload_data.sun_color = scene.sun_color_hdr
     for i in 1:N_CELL_TYPES
         view.upload_data.cell_air_lookup[i] = (i-1) in scene.air_cells
     end
@@ -230,12 +277,23 @@ function render(app::App, scene::Scene, view::Viewport)
     n_tris = n_faces * 2
     n_verts = n_tris * 3
 
-    target_clear(view.view_target, v4f(0.7, 0.7, 1, 1))
+    # Do the depth pre-pass.
+    target_configure_fragment_outputs(view.view_target, view.view_target_outputs_depth_only)
     target_clear(view.view_target, @f32(1))
-
-    #TODO: Do a depth pre-pass.
+    render_mesh(
+        service_BasicGraphics().empty_mesh,
+        app.render_cubes_forward,
+        shape=PrimitiveTypes.triangle,
+        elements = IntervalU(
+            min=1,
+            size=n_verts
+        )
+    )
 
     # Do the forward pass.
+    target_configure_fragment_outputs(view.view_target, view.view_target_outputs_forward)
+    set_depth_test(ValueTests.less_than_or_equal)
+    target_clear(view.view_target, v4f(0.7, 0.7, 1, 1))
     render_mesh(
         service_BasicGraphics().empty_mesh,
         app.render_cubes_forward,

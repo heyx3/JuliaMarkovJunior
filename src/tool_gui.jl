@@ -28,6 +28,9 @@ mutable struct GuiMemory
     max_seconds_for_run_to_end::Float32
 
     rendering_dim::Int
+
+    render3D_sun_color::v3f
+    render3D_sun_dir::v3f
 end
 GuiMemory() = GuiMemory(
     2, [ 64, 64 ],
@@ -35,7 +38,8 @@ GuiMemory() = GuiMemory(
     "0x1234567890abcdef",
     "MyScene",
     false, 150, 10, 1000, 10,
-    2
+    2,
+    v3f(1, 1, 1), vnorm(v3f(1, -1, -1))
 )
 StructTypes.StructType(::Type{GuiMemory}) = StructTypes.Mutable()
 
@@ -80,6 +84,8 @@ mutable struct GuiRunner
         Tuple{Val{2}, Array{v3f, 2}, Texture}, # 2D rendering
         Tuple{Val{3}, Render3D.Scene, Render3D.Viewport} # 3D rendering
     }
+    render_settings_are_open::Bool
+    reset_render_settings_window::Bool
 
     time_till_next_tick::Float32
     textures_to_destroy::Vector{Texture} # Textures are deleted the frame *after* they're no longer used,
@@ -146,12 +152,16 @@ function GuiRunner(memory::GuiMemory,
         elseif memory.rendering_dim == 3
             (
                 Val(3),
-                Render3D.Scene(),
+                Render3D.Scene(
+                    sun_dir=memory.render3D_sun_dir,
+                    sun_color=memory.render3D_sun_color
+                ),
                 Render3D.Viewport(v2i(1200, 1200), v3f(3, 3, 3))
             )
         else
             error("Unhandled: ", memory.rendering_dim)
         end,
+        false, false,
 
         -1.0f0,
         Vector{Texture}()
@@ -425,8 +435,11 @@ gui_runner_is_finished(runner::GuiRunner)::Bool = isnothing(runner.algorithm_sta
 
 function gui_main(runner::GuiRunner, delta_seconds::Float32)
     print_wnd_sizes::Bool = false && @markovjunior_debug(rand(Float32) < 0.01, false)
-    pane_flags = CImGui.LibCImGui.ImGuiWindowFlags_HorizontalScrollbar |
-                 (CImGui.LibCImGui.ImGuiWindowFlags_NoDecoration & (~CImGui.LibCImGui.ImGuiWindowFlags_NoScrollbar))
+    pane_flags = |(
+        CImGui.LibCImGui.ImGuiWindowFlags_HorizontalScrollbar,
+        CImGui.LibCImGui.ImGuiWindowFlags_NoDecoration & (~CImGui.LibCImGui.ImGuiWindowFlags_NoScrollbar),
+        CImGui.LibCImGui.ImGuiWindowFlags_NoBringToFrontOnFocus
+    )
 
     foreach(close, runner.textures_to_destroy)
     empty!(runner.textures_to_destroy)
@@ -437,6 +450,27 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
 
         Render3D.tick_scene!(scene_3D, delta_seconds)
         Render3D.render(runner.render_3D_assets, scene_3D, viewport_3D)
+    end
+
+    function render_settings_window_fn()
+        Render3D.scene_settings_gui!(runner.rendering[2])
+        Render3D.viewport_settings_gui!(runner.rendering[3], runner.rendering[2])
+
+        # Remember the current settings.
+        runner.memory.render3D_sun_dir = runner.rendering[2].sun_dir
+        runner.memory.render3D_sun_color = runner.rendering[2].sun_color_hdr
+    end
+    if runner.render_settings_are_open
+        if runner.reset_render_settings_window
+            runner.reset_render_settings_window = false
+            CImGui.SetNextWindowPos((30, 30))
+            CImGui.SetNextWindowFocus()
+        end
+        @c gui_window(render_settings_window_fn, "Render Settings", &runner.render_settings_are_open, |(
+            CImGui.LibCImGui.ImGuiWindowFlags_AlwaysAutoResize,
+            CImGui.LibCImGui.ImGuiWindowFlags_MenuBar,
+            CImGui.LibCImGui.ImGuiWindowFlags_NoCollapse
+        ))
     end
 
     gui_next_window_space(
@@ -462,7 +496,10 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
                 # Allocate a 3D renderer.
                 runner.rendering = (
                     Val(3),
-                    Render3D.Scene(),
+                    Render3D.Scene(
+                        sun_dir = runner.memory.render3D_sun_dir,
+                        sun_color = runner.memory.render3D_sun_color
+                    ),
                     Render3D.Viewport(v2i(1200, 1200), v3f(3, 3, 3))
                 )
                 (_, scene::Render3D.Scene, viewport::Render3D.Viewport) = runner.rendering
@@ -487,6 +524,16 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
                 # Initialize the 2D renderer.
                 update_gui_runner_texture_2D(runner)
                 runner.memory.rendering_dim = 2
+            end
+
+            # Offer a popup for render settings.
+            CImGui.SameLine(0, 20)
+            if CImGui.Button("Render Settings")
+                if runner.render_settings_are_open
+                    runner.reset_render_settings_window = true
+                else
+                    runner.render_settings_are_open = true
+                end
             end
         else
             error("Unhandled: ", typeof(runner.rendering))
@@ -768,43 +815,46 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         end end end
 
         # Debug widgets:
-        CImGui.Dummy(1, 50)
-        CImGui.Separator(); CImGui.SameLine(30); CImGui.Text("DEBUG")
-        @markovjunior_debug() && gui_with_style(CImGui.LibCImGui.ImGuiCol_Button, v3f(0.2, 0.2, 0.2)) do
-            render_tex = if runner.rendering[1] isa Val{2}
-                runner.rendering[3]
-            elseif runner.rendering[1] isa Val{3}
-                runner.rendering[3].view_color
-            else
-                error("Unhandled: ", typeof(runner.rendering))
-            end
-
-            if CImGui.Button("Recompile Shaders", (200, 30))
-                new_ones = try
-                    Render3D.App()
-                catch e
-                    runner.algorithm_error_msg = sprint(showerror, e)
-                    nothing
+        if @markovjunior_debug()
+            CImGui.Separator()
+            CImGui.Dummy(1, 50)
+            CImGui.Separator(); CImGui.SameLine(30); CImGui.Text("DEBUG")
+            gui_with_style(CImGui.LibCImGui.ImGuiCol_Button, v3f(0.2, 0.2, 0.2)) do
+                render_tex = if runner.rendering[1] isa Val{2}
+                    runner.rendering[3]
+                elseif runner.rendering[1] isa Val{3}
+                    runner.rendering[3].view_color
+                else
+                    error("Unhandled: ", typeof(runner.rendering))
                 end
-                if exists(new_ones)
-                    close(runner.render_3D_assets)
-                    runner.render_3D_assets = new_ones
+
+                if CImGui.Button("Recompile Shaders", (200, 30))
+                    new_ones = try
+                        Render3D.App()
+                    catch e
+                        runner.algorithm_error_msg = sprint(showerror, e)
+                        nothing
+                    end
+                    if exists(new_ones)
+                        close(runner.render_3D_assets)
+                        runner.render_3D_assets = new_ones
+                    end
                 end
-            end
 
-            if CImGui.Button("Log GUI draw calls", (200, 30))
-                println(stderr, "LOGGING WITH RENDER TEX ID ",
-                        gui_tex_handle(render_tex))
-                service_GUI().debug_log_render_commands = true
-            end
+                if CImGui.Button("Log GUI draw calls", (200, 30))
+                    println(stderr, "LOGGING WITH RENDER TEX ID ",
+                            gui_tex_handle(render_tex))
+                    service_GUI().debug_log_render_commands = true
+                end
 
-            if CImGui.Button("Log center-pixel of render", (300, 30))
-                values = fill(zero(v4f), 1, 1)
-                pixel_pos = round(v2u, render_tex.size.xy / 2)
-                get_tex_color(render_tex, values, TexSubset(
-                    Box(center=pixel_pos, size=one(v2u))
-                ))
-                println(stderr, "Render at pixel ", pixel_pos, ": ", values[1, 1])
+                if CImGui.Button("Log center-pixel of render", (300, 30))
+                    values = fill(zero(v4f), 1, 1)
+                    pixel_pos = round(v2u, render_tex.size.xy / 2)
+                    get_tex_color(render_tex, values, TexSubset(
+                        Box(center=pixel_pos, size=one(v2u))
+                    ))
+                    println(stderr, "Render at pixel ", pixel_pos, ": ", values[1, 1])
+                end
             end
         end
 
