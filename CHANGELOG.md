@@ -1,3 +1,7 @@
+# v0.3
+
+* Add 3D view to the scene renderer
+
 # v0.2
 
 * Switch to new DSL
