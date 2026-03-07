@@ -209,6 +209,8 @@ function render(app::App, scene::Scene, view::Viewport)
         cam_view_mat(view.cam),
         cam_projection_mat(view.cam)
     )
+    view.upload_data.sun_dir = vnorm(v3f(-1, 1, -1))
+    view.upload_data.sun_color = v3f(1, 1, 1)
     for i in 1:N_CELL_TYPES
         view.upload_data.cell_air_lookup[i] = (i-1) in scene.air_cells
     end
@@ -218,7 +220,9 @@ function render(app::App, scene::Scene, view::Viewport)
     set_uniform_block(view.upload_buffer, 1) #NOTE: GLSL index is 0-based, while this is 1-based!
 
     # Set up rendering state.
-    set_render_state(RenderState())
+    set_render_state(RenderState(
+        depth_test = ValueTests.less_than
+    ))
     view_activate(scene.grid_tex_3D)
     target_activate(view.view_target)
     n_cubes = prod(scene.grid_tex_3D.size.xyz)

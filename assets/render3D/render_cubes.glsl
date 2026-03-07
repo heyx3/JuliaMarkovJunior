@@ -22,7 +22,8 @@ void main() {
         vertIdx = (gl_VertexID % 3),     //Which vert of tri?
         faceVertIdx = (gl_VertexID % 6); //Which vert of face?
     int faceAxis = (faceIdx / 2),
-        faceDir = -1 + (2 * (faceIdx % 2));
+        faceDirMask = (faceIdx % 2),
+        faceDir = -1 + (2 * faceDirMask);
 
     //Read this grid cell.
     usampler3D gridTex = usampler3D(u_data.grid_3D);
@@ -59,19 +60,20 @@ void main() {
         vec2(1, 1),
         vec2(1, 0)
     };
-    ivec2 faceTangentAxesOptions[3] = {
-        ivec2(1, 2),
-        ivec2(0, 2),
-        ivec2(0, 1)
+    ivec3 faceTangentAxesOptions[3] = {
+        ivec3(1, 2, 0),
+        ivec3(0, 2, 1),
+        ivec3(0, 1, 2)
     };
     int elementIdx = faceIdcLookup[faceVertIdx];
-    ivec2 faceTangentAxes = faceTangentAxesOptions[faceAxis];
+    ivec3 faceTangentAxes = faceTangentAxesOptions[faceAxis];
 
     //Generate the fragment inputs.
     vec2 faceUV = faceUVOptions[elementIdx];
     vec3 gridPosF = vec3(gridCell);
     gridPosF[faceTangentAxes.x] += faceUV.x;
     gridPosF[faceTangentAxes.y] += faceUV.y;
+    gridPosF[faceTangentAxes.z] += faceDirMask;
     #if !DEPTH_ONLY
         o_normal = vec3(0, 0, 0);
         o_normal[faceAxis] = float(faceDir);
@@ -127,7 +129,7 @@ void main() {
     vec3 albedo = pixelColorTable[o_cellValue];
 
     //Make darker blocks metallic.
-    float metallic = step(0.3, max(albedo.x, max(albedo.y, albedo.z)));
+    float metallic = step(max(albedo.x, max(albedo.y, albedo.z)), 0.3);
 
     //Make roughness based on the pixel's integer value.
     float roughness = mix(0.15, 1.0, float(o_cellValue) / 16.0);
@@ -144,7 +146,7 @@ void main() {
         albedo, metallic, roughness
     );
 
-    outColor = vec4(albedo, 1);
+    outColor = vec4(litColor, 1);
 
 #endif
 }

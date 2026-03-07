@@ -778,11 +778,26 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
             else
                 error("Unhandled: ", typeof(runner.rendering))
             end
+
+            if CImGui.Button("Recompile Shaders", (200, 30))
+                new_ones = try
+                    Render3D.App()
+                catch e
+                    runner.algorithm_error_msg = sprint(showerror, e)
+                    nothing
+                end
+                if exists(new_ones)
+                    close(runner.render_3D_assets)
+                    runner.render_3D_assets = new_ones
+                end
+            end
+
             if CImGui.Button("Log GUI draw calls", (200, 30))
                 println(stderr, "LOGGING WITH RENDER TEX ID ",
                         gui_tex_handle(render_tex))
                 service_GUI().debug_log_render_commands = true
             end
+
             if CImGui.Button("Log center-pixel of render", (300, 30))
                 values = fill(zero(v4f), 1, 1)
                 pixel_pos = round(v2u, render_tex.size.xy / 2)
