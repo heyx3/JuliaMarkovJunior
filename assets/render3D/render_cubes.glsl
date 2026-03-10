@@ -50,6 +50,16 @@ void main() {
     }
 
     //Calculate vertex data.
+    bool flipWinding[6] = {
+        false, true,
+        true, false,
+        false, true
+    };
+    int faceIdxFlipLookup[6] = {
+        0, 2, 1,
+        3, 5, 4
+    };
+    int faceIdxIdx = flipWinding[faceIdx] ? faceIdxFlipLookup[faceVertIdx] : faceVertIdx;
     int faceIdcLookup[6] = {
         0, 1, 2,
         0, 2, 3
@@ -65,7 +75,7 @@ void main() {
         ivec3(0, 2, 1),
         ivec3(0, 1, 2)
     };
-    int elementIdx = faceIdcLookup[faceVertIdx];
+    int elementIdx = faceIdcLookup[faceIdxIdx];
     ivec3 faceTangentAxes = faceTangentAxesOptions[faceAxis];
 
     //Generate the fragment inputs.
@@ -105,23 +115,23 @@ void main() {
 
     //For now, look up color in a hard-coded table matching the 2D renderer.
     vec3 pixelColorTable[] = {
-        vec3(0, 0, 0),
-        vec3(0.5, 0.5, 0.5),
-        vec3(1, 1, 1),
+        vec3(0.05),
+        vec3(0.5),
+        vec3(0.95),
 
-        vec3(1, 0, 0),
-        vec3(0, 1, 0),
-        vec3(0, 0, 1),
-        vec3(1, 1, 0),
-        vec3(1, 0, 1),
-        vec3(0, 1, 1),
+        vec3(1, 0.05, 0.05),
+        vec3(0.05, 1, 0.05),
+        vec3(0.05, 0.05, 1),
+        vec3(1, 1, 0.05),
+        vec3(1, 0.05, 1),
+        vec3(0.05, 1, 1),
 
-        vec3(1, 0.5, 0),
-        vec3(1, 0, 0.5),
+        vec3(1, 0.5, 0.05),
+        vec3(1, 0.05, 0.5),
 
-        vec3(0, 0.5, 0.2),
-        vec3(0, 0.2, 0.5),
-        vec3(0.5, 0.2, 0),
+        vec3(0.05, 0.5, 0.2),
+        vec3(0.05, 0.2, 0.5),
+        vec3(0.5, 0.2, 0.05),
 
         vec3(1, 0.9, 0.8),
         vec3(0.7, 0.85, 1)
@@ -146,17 +156,14 @@ void main() {
         albedo, metallic, roughness
     );
     float shadowMask = computeShadows(
-        o_gridPosF, u_data.sun_dir,
-        sampler2DShadow(u_data.sun_shadowmap), u_data.sun_shadowmap_mat_world_to_texel,
+        o_gridPosF,
+        u_data.sun_dir,
+        sampler2DShadow(u_data.sun_shadowmap),
+        u_data.sun_shadowmap_mat_world_to_texel,
         u_data.shadowmap_world_bias
     );
 
     outColor = vec4(litColor * shadowMask, 1);
-
-    //DEBUG: Viz data.
-    // outColor = vec4(0, 0, 0, 1);
-    // vec4 smTexel4 = u_data.sun_shadowmap_mat_world_to_texel * vec4(o_gridPosF, 1);
-    // outColor.rg = smTexel4.xy / smTexel4.w;
 
 #endif
 }

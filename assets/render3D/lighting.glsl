@@ -98,10 +98,10 @@ vec3 computeAmbient(vec3 surfacePos, vec3 normal, vec3 albedo)
 float computeShadows(vec3 worldPos, vec3 worldLightDir,
                      sampler2DShadow shadowmap, mat4 worldToShadowTexel,
                      float shadowWorldBias) {
-    worldPos -= (worldLightDir * shadowWorldBias);
+    worldPos += (worldLightDir * shadowWorldBias);
 
     vec4 texel4 = worldToShadowTexel * vec4(worldPos, 1);
-    vec3 texel = texel4.xyz / texel4.w;
+    vec3 texel = texel4.xyz;// / texel4.w;
     //texel.y = 1.0 - texel.y;
 
     //We calculate the shadowmap bounds to exactly cover the level bounds.

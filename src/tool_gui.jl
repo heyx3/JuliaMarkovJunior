@@ -945,6 +945,21 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
                     CImGui.InputFloat4("##SunShadowmapRow3", Ref(v4f(m[3, :]...)))
                     CImGui.InputFloat4("##SunShadowmapRow4", Ref(v4f(m[4, :]...)))
                 end
+                CImGui.Text("Sun Shadowmap: Sample coordinates")
+                gui_with_indentation() do
+                    m = runner.rendering[2].sun_shadowmap_world_to_texel
+                    for (j, p_world) in enumerate((v3f(0.9, 0.9, 1), v3f(0.95, 0.95, 1), v3f(1.05, 1.05, 1)))
+                        CImGui.Text("$j: $p_world")
+                        gui_with_nested_id(j) do
+                            p_sun_texel = m * vappend(p_world, 1.0f0)
+                            p_biased_sun_texel = m * vappend(p_world + runner.rendering[3].shadowmap_world_bias * runner.rendering[2].sun_dir, 1.0f0)
+                            CImGui.InputFloat4("Sun Texel", Ref(p_sun_texel))
+                            CImGui.InputFloat3("Sun Texel (dehom)", Ref(p_sun_texel.xyz / p_sun_texel.w))
+                            CImGui.InputFloat4("Sun Texel with Bias", Ref(p_biased_sun_texel))
+                            CImGui.InputFloat3("Sun Texel with Bias (dehom)", Ref(p_biased_sun_texel.xyz / p_biased_sun_texel.w))
+                        end
+                    end
+                end
             end
         end
 

@@ -142,7 +142,10 @@ Draws the given depth-texture using the depth-visualization shader,
 "
 function visualize_depth_tex(app::App, tex::Texture, out_target_uv::Box2Df, total_seconds::Float32)
     set_uniform(app.visualize_depth_tex, "u_time", total_seconds)
-    set_uniform(app.visualize_depth_tex, "u_tex", tex)
+    set_uniform(app.visualize_depth_tex, "u_tex", get_view(tex, TexSampler{2}(
+        pixel_filter = PixelFilters.rough,
+        wrapping = WrapModes.clamp
+    )))
     set_uniform(app.visualize_depth_tex, "u_ndcPos", convert(v2f, (center(out_target_uv) - 0.5) * 2))
     set_uniform(app.visualize_depth_tex, "u_ndcSize", convert(v2f, size(out_target_uv)  * 2))
     custom_blit(tex, app.visualize_depth_tex)
@@ -161,6 +164,9 @@ mutable struct BasicViewport
     view_depth::Texture
     view_target::Target
 
+    # If true, backfaces are drawn instead of front-faces.
+    flip_face_culling::Bool
+
     render_buffer_cpu::UboData
     render_buffer_gpu::Buffer
 end
@@ -168,7 +174,8 @@ function BasicViewport(resolution::Vec2{<:Integer}, start_pos::Vec3
                        ;
                        color_outputs::Vector{TargetOutput} = TargetOutput[ ],
                        projection::Union{PerspectiveProjection{Float32}, OrthographicProjection{Float32}} =
-                         PerspectiveProjection{Float32}())
+                         PerspectiveProjection{Float32}(),
+                       flip_face_culling::Bool = false)
     return BasicViewport(
         Cam3D{Float32}(
             pos = convert(v3f, start_pos),
@@ -179,15 +186,13 @@ function BasicViewport(resolution::Vec2{<:Integer}, start_pos::Vec3
         begin
             view_depth = Texture(
                 DepthStencilFormats.depth_24u, resolution,
-                sampler = TexSampler{2}(
-                    pixel_filter=PixelFilters.smooth,
-                    wrapping=WrapModes.clamp
-                ),
                 n_mips=1
             )
             view_target = Target(color_outputs, TargetOutput(tex=view_depth))
             (view_depth, view_target)
         end...,
+
+        flip_face_culling,
 
         UboData(), Buffer(true, UboData)
     )
@@ -236,7 +241,8 @@ function Scene(; sun_dir::v3f = norm(v3f(1, -1, -1)),
 
         # Note that none of the arguments to the sun's viewport are important here
         #    except for its resolution.
-        BasicViewport(v2i(i->sun_shadow_resolution), zero(v3f)),
+        BasicViewport(v2i(i->sun_shadow_resolution), zero(v3f),
+                      flip_face_culling=true),
         m_identityf(4, 4), m_identityf(4, 4),
 
         Vector{Pair{Texture, Int}}()
@@ -446,13 +452,18 @@ function render(app::App, scene::Scene, view::Union{BasicViewport, FullViewport}
     else
         scene.sun_pov.view_depth
     end
-    view.render_buffer_cpu.sun_shadowmap = GL.gl_type(get_ogl_handle(get_view(sun_shadowmap_tex)))
+    sun_shadowmap_view = get_view(sun_shadowmap_tex, TexSampler{2}(
+        pixel_filter = PixelFilters.smooth,
+        wrapping = WrapModes.clamp,
+        depth_comparison_mode = ValueTests.less_than_or_equal
+    ))
+    view.render_buffer_cpu.sun_shadowmap = GL.gl_type(get_ogl_handle(sun_shadowmap_view))
     view.render_buffer_cpu.sun_shadowmap_mat_viewproj = scene.sun_shadowmap_viewproj
     view.render_buffer_cpu.sun_shadowmap_mat_world_to_texel = scene.sun_shadowmap_world_to_texel
-    view.render_buffer_cpu.shadowmap_world_bias = if view isa BasicViewport
-        0.0f0
-    else
+    view.render_buffer_cpu.shadowmap_world_bias = if view isa FullViewport
         view.shadowmap_world_bias
+    else
+        0.0f0
     end
     for i in 1:N_CELL_TYPES
         view.render_buffer_cpu.cell_air_lookup[i] = (i-1) in scene.air_cells
@@ -464,10 +475,11 @@ function render(app::App, scene::Scene, view::Union{BasicViewport, FullViewport}
 
     # Set up rendering state.
     set_render_state(RenderState(
-        depth_test = ValueTests.less_than
+        depth_test = ValueTests.less_than,
+        cull_mode = view.flip_face_culling ? FaceCullModes.backwards : FaceCullModes.on
     ))
     view_activate(scene.grid_tex_3D)
-    view_activate(sun_shadowmap_tex)
+    view_activate(sun_shadowmap_view)
     target_activate(view.view_target)
     n_cubes = prod(scene.grid_tex_3D.size.xyz)
     n_faces = n_cubes * 6
@@ -505,7 +517,7 @@ function render(app::App, scene::Scene, view::Union{BasicViewport, FullViewport}
     end
 
     # Clean up.
-    view_deactivate(sun_shadowmap_tex)
+    view_deactivate(sun_shadowmap_view)
     view_deactivate(scene.grid_tex_3D)
     target_activate(nothing)
     return nothing
