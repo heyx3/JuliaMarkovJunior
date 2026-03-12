@@ -209,7 +209,7 @@ function Base.close(runner::GuiRunner)
     close(runner.visualized_shadowmap)
 
     if runner.rendering[1] isa Val{2}
-        close(runner.rendering[1])
+        close(runner.rendering[3])
     elseif runner.rendering[1] isa Val{3}
         close(runner.rendering[2])
         close(runner.rendering[3])
@@ -1038,9 +1038,13 @@ function gui_main(runner::GuiRunner, delta_seconds::Float32)
         n_available_lines = max(2, round(Int,
             (CImGui.GetContentRegionAvail().y - 100) / CImGui.GetTextLineHeightWithSpacing()
         ))
-        @c CImGui.ListBox("##Scenes", &next_scene_idx_c,
-                          runner.available_scenes, length(runner.available_scenes),
-                          n_available_lines)
+        # If there are any unsaved changes, draw the scene list disabled.
+        gui_with_style(CImGui.LibCImGui.ImGuiCol_FrameBg, v3f(0.2, 0.1, 0.1), unchanged=!runner.current_scene_has_changes) do
+          gui_with_style(CImGui.LibCImGui.ImGuiCol_FrameBgHovered, v3f(0.2, 0.1, 0.1), unchanged=!runner.current_scene_has_changes) do
+            @c CImGui.ListBox("##Scenes", &next_scene_idx_c,
+                              runner.available_scenes, length(runner.available_scenes),
+                              n_available_lines)
+        end end
         if (next_scene_idx_c+1 != runner.current_scene_idx) && !runner.current_scene_has_changes
             runner.current_scene_idx = next_scene_idx_c+1
             runner.memory.current_scene_file_name = runner.available_scenes[runner.current_scene_idx]
