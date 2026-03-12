@@ -28,20 +28,21 @@ const BIG_TEST = @markovjunior 3 'R' begin
     @rewrite (length/2.0)  ___     => [1][3][2]  *2
     @rewrite (length*3.0)  [Rw][G] => {wgb}[M]   /1.5
 
-    @rewrite (4.0*length)  R=>G  %0.1
+    # Next op is 10
+    @rewrite (4.0*length)  R=>G  %0.1       \[ +w ] #NOTE: symmetry should be ignored by parser because the rule is a single pixel
     @rewrite (2:10)        R=>G  %0.2  *3.5
     @rewrite               R=>G  %0.3  /4.1
 
     # Next op is 13
     @rewrite ((area*4.2):(0.5*length)) RM=>GT  \[ x ]
-    @rewrite (8:(area/4.2))            RM=>GT  \[ +1 ]
+    @rewrite (8:(area/4.2))            RM=>GT  \[ +(1) ]
     @rewrite                           RM=>GT                   temperature(0.2)
-    @rewrite                           RM=>GT  \[ x, -2, 4... ] temperature(0.1)
+    @rewrite                           RM=>GT  \[ x, -(2), 4... ] temperature(0.1)
 
     @rewrite begin
         PRIORITIZE(rare)
         R => G
-        R_[Bb]w => [2]_[bB]{wbR}  %(0.4:0.6)  *0.2   \[z...]
+        R_[Bb]w => [2]_[bB]{wbR}  %(0.4:0.6)  *0.2   \[ -z..., +(8)...]
     end begin
         temperature(40.9)
     end
@@ -100,7 +101,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['B'], MJ.CELL_CODE_BY_CHAR['w'])
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ ], 1
                 )
             ),
             nothing,
@@ -158,13 +159,14 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['B'], MJ.RewriteRuleCell_Lookup(1))
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ ], 1
                 )
             ),
             nothing,
             ()
         ),
 
+        # Next op is 7
         MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
@@ -184,7 +186,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         )
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ ], 1
                 )
             ),
             MJ.ThresholdByArea(1.5f0),
@@ -200,7 +202,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.RewriteRuleCell_Wildcard(), MJ.RewriteRuleCell_Lookup(2))
                     ),
                     nothing, 2.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ ], 1
                 )
             ),
             MJ.ThresholdByLength(0.5f0),
@@ -223,13 +225,14 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         )
                     ),
                     nothing, convert(Float32, 1 / 1.5),
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ ], 1
                 )
             ),
             MJ.ThresholdByLength(3.0f0),
             ()
         ),
 
+        # Next op is 10
         MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
@@ -273,6 +276,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             ()
         ),
 
+        # Next op is 13
         MJ.MarkovOpRewrite(
             DEFAULT_PRIORITY,
             tuple(
@@ -318,7 +322,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['M'], MJ.CELL_CODE_BY_CHAR['T'])
                     ),
                     nothing, 1.0f0,
-                    MJ.GridDir[ ], 0
+                    MJ.GridDir[ ], 1
                 )
             ),
             nothing,
@@ -335,7 +339,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         (MJ.CELL_CODE_BY_CHAR['M'], MJ.CELL_CODE_BY_CHAR['T'])
                     ),
                     nothing, 1.0f0,
-                    [ MJ.GridDir(1, -1), MJ.GridDir(1, 1), MJ.GridDir(2, -1) ], 3
+                    [ MJ.GridDir(1, -1), MJ.GridDir(1, 1), MJ.GridDir(2, -1) ], 4
                 )
             ),
             nothing,
@@ -344,6 +348,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             )
         ),
 
+        # Next op is 13
         MJ.MarkovOpRewrite(
             MJ.MarkovRewritePriority_Rare(),
             tuple(
@@ -371,7 +376,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
                         )
                     ),
                     (0.4f0, 0.6f0), 0.2f0,
-                    MJ.GridDir[ ], 2
+                    MJ.GridDir[ ], (3, 8)
                 )
             ),
             nothing,
@@ -380,6 +385,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             )
         ),
 
+        # Next op is 18
         MJ.MarkovOpDrawBox(
             MJ.CELL_CODE_BY_CHAR['R'],
             MJ.DrawBoxSpace.uv,
@@ -411,6 +417,7 @@ const BIG_TEST_ANSWER = MJ.MarkovAlgorithm(
             (0.1f0, 0.9f0)
         ),
 
+        # Next op is 22
         MJ.MarkovOpSequence(
             MJ.AbstractMarkovOp[
                 MJ.MarkovOpRewrite(
@@ -595,10 +602,10 @@ function test_compare(a::MJ.MarkovOpRewrite, b::MJ.MarkovOpRewrite, tab::String)
                     end
                 end
             end
-            if ra.unlimited_symmetries_after_axis != rb.unlimited_symmetries_after_axis
-                println(tab, "\tInfinite-symmetry mismatch! ",
-                            ra.unlimited_symmetries_after_axis,
-                            " vs ", rb.unlimited_symmetries_after_axis)
+            if ra.tail_symmetry != rb.tail_symmetry
+                println(tab, "\tTail-symmetry mismatch! ",
+                            ra.tail_symmetry,
+                            " vs ", rb.tail_symmetry)
             end
 
             if ra != rb
@@ -632,16 +639,19 @@ end
 
 @bp_check(BIG_TEST == BIG_TEST_ANSWER,
           test_compare(BIG_TEST, BIG_TEST_ANSWER),
-          "TEST FAILURE! Detailed comparison printout is above this line")
+          "INVALID result from `@markovjunior`! ",
+            "Detailed printout is above this line -- A is the actual, B is the expected")
 
 const BIG_TEST_2 = MJ.parse_markovjunior(MJ.dsl_string(BIG_TEST))
 @bp_check(BIG_TEST_2 == BIG_TEST_ANSWER,
           test_compare(BIG_TEST_2, BIG_TEST_ANSWER),
-          "TEST FAILURE! Detailed comparison printout is above this line")
+          "INCORRECT result from `dsl_string()`! ",
+            "Detailed printout is above this line -- A is parsed from `dsl_string()`, B is the expected")
 # Do a sanity-check:
 @bp_check(BIG_TEST == BIG_TEST_2,
           test_compare(BIG_TEST, BIG_TEST_2),
-          "TEST FAILURE! Detailed comparison printout is above this line")
+          "SANITY FAIL! Transitive equality seems to be broken (a==b and b==c, but a!=b). ",
+            "Detailed comparison printout is above this line -- A is from `@markovjunior` and B is parsed from `dsl_string()`")
 
 
 println("\n\nTests passed!\n")

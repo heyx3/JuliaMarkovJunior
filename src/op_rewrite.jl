@@ -31,19 +31,22 @@ pick_rewrite_value(dest::RewriteRuleCell_Wildcard, src::RewriteRuleCellSource, s
 ###########################
 #  Rewrite rule: 1D strip
 
+"A description of extra allowed symmetries starting at a specific axis, optionally different starting axes per-direction"
+const RewriteRule_TailSymmetry = Union{Optional{Int}, NTuple{2, Optional{Int}}}
+
 struct RewriteRule_Strip{NCells, TCells<:NTuple{NCells, RewriteCell}}
     cells::TCells
     mask::Union{Nothing, Float32, NTuple{2, Float32}} # Disabled, constant, or random range
     weight::Float32
     explicit_symmetries::Vector{GridDir}
-    unlimited_symmetries_after_axis::Optional{Int} # If <1, then all symmetries are allowed and 'explicit_symmetries' is empty
+    tail_symmetry::RewriteRule_TailSymmetry
 end
 Base.:(==)(a::RewriteRule_Strip{N, T}, b::RewriteRule_Strip{N, T}) where {N, T} = (
     a.cells == b.cells &&
     a.mask == b.mask &&
     a.weight == b.weight &&
     a.explicit_symmetries == b.explicit_symmetries &&
-    a.unlimited_symmetries_after_axis == b.unlimited_symmetries_after_axis
+    a.tail_symmetry == b.tail_symmetry
 )
 
 const MaskGrid{N} = Array{Float32, N}
@@ -124,16 +127,31 @@ function visit_rule_match_data(process_candidate::TLambda,
             end
         end
     end
+
     for dir in r.explicit_symmetries
         process_dir(dir)
     end
-    if exists(r.unlimited_symmetries_after_axis)
-        for axis in (r.unlimited_symmetries_after_axis+1):NDims
+
+    if isnothing(r.tail_symmetry)
+        # No extra symmetries to process.
+    elseif r.tail_symmetry isa Int
+        for axis in r.tail_symmetry:NDims
             for sign in (-1, 1)
                 process_dir(GridDir(axis, sign))
             end
         end
+    elseif r.tail_symmetry isa NTuple{2, Optional{Int}}
+        (a_neg, a_pos) = r.tail_symmetry
+        exists(a_neg) && for axis in a_neg:NDims
+            process_dir(GridDir(axis, -1))
+        end
+        exists(a_pos) && for axis in a_pos:NDims
+            process_dir(GridDir(axis, +1))
+        end
+    else
+        error("Unhandled: ", typeof(r.tail_symmetry))
     end
+
     return nothing
 end
 
@@ -280,8 +298,8 @@ parse_markovjunior_rewrite_priority(::Val{Name}, expr_args, inputs::MacroParserI
 dsl_string(p::AbstractMarkovRewritePriority) = error("Unimplemented: ", typeof(p))
 
 
-#########################
-#  Rewrite Op: 1D strip
+##################
+#  Rewrite Op
 
 "A simple MarkovJunior rewrite op, affecting a 1D strip of pixels"
 struct MarkovOpRewrite{TRules <: Tuple{Vararg{RewriteRule_Strip}},
@@ -557,7 +575,7 @@ dsl_string(@nospecialize strip::RewriteRule_Strip) = string(
     dsl_string_rewrite_dest.(t[2] for t in strip.cells)...,
     " $(dsl_string_rewrite_mask(strip.mask))",
     (isone(strip.weight) ? () : (" *", strip.weight))...,
-    if isempty(strip.explicit_symmetries) && (strip.unlimited_symmetries_after_axis < 1)
+    if isempty(strip.explicit_symmetries) && isnothing(strip.tail_symmetry)
         ()
     else
         (
@@ -573,13 +591,24 @@ dsl_string(@nospecialize strip::RewriteRule_Strip) = string(
                 )
             )...,
             # Unlimited symmetries:
-            if isnothing(strip.unlimited_symmetries_after_axis)
-                ()
+            if exists(strip.tail_symmetry) && !isempty(strip.explicit_symmetries)
+                ", "
             else
-                (
-                    isempty(strip.explicit_symmetries) ? "" : ", ",
-                    (strip.unlimited_symmetries_after_axis+1), "..."
+                ""
+            end,
+            if isnothing(strip.tail_symmetry)
+                tuple()
+            elseif strip.tail_symmetry isa Int
+                tuple(
+                    strip.tail_symmetry, "..."
                 )
+            elseif strip.tail_symmetry isa NTuple{2, Optional{Int}}
+                tuple(
+                    "-(", strip.tail_symmetry[1], ")..., ",
+                    "+(", strip.tail_symmetry[2], ")...",
+                )
+            else
+                error("Unhandled: ", typeof(strip.tail_symmetry))
             end...,
             " ]"
         )
@@ -705,7 +734,8 @@ function parse_markovjunior_rewrite_rule_side(inputs::MacroParserInputs, loc, ex
         pop!(inputs.op_stack_trace)
     end
 end
-function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc, exprs)
+function parse_markovjunior_rewrite_rule_strip_symmetry(inputs::MacroParserInputs, loc, exprs)
+    # If no symmetry is given at all, then support all symmetries.
     if isnothing(exprs)
         return (GridDir[ ], 1)
     end
@@ -713,65 +743,87 @@ function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc
     push!(inputs.op_stack_trace, "symmetry statement")
     try
         s_explicit = GridDir[ ]
-        s_start_idx::Optional{Int} = nothing
-        function get_axis(a::Union{Symbol, Int})
-            if a == :x
-                return 1
-            elseif a == :y
-                return 2
-            elseif a == :z
-                return 3
-            elseif a == :w
-                return 4
-            elseif a isa Symbol
-                raise_parse_error(loc, inputs, "Invalid axis token `a`")
-            end
-
-            if a == 0
-                raise_parse_error(loc, inputs, "Symmetry axes (and all other indices in Julia) are 1-based!")
-            elseif a < 0
-                return -a
-            elseif a > 0
-                return a
+        s_tail::RewriteRule_TailSymmetry = nothing
+        function get_axis(a)::Int
+            if a isa Symbol
+                if a == :x
+                    return 1
+                elseif a == :y
+                    return 2
+                elseif a == :z
+                    return 3
+                elseif a == :w
+                    return 4
+                else
+                    raise_parse_error(loc, inputs, "Invalid axis token `a`")
+                end
+            elseif a isa Integer
+                if a == 0
+                    raise_parse_error(loc, inputs, "Symmetry axes (and all other indices in Julia) are 1-based!")
+                elseif a < 0
+                    raise_parse_error(loc, inputs, "Invalid symmetry axis: expected 1 or greater; got ", a)
+                else
+                    return convert(Int, a)
+                end
             else
-                error("Unhandled: ", a)
+                raise_parse_error(loc, inputs, "Unsupported symmetry entry: ", typeof(a))
             end
         end
         for expr in exprs
             if @capture(expr, a_...)
-                if exists(s_start_idx)
-                    raise_parse_error(loc, inputs, "More than one use of the '...' syntax")
-                elseif (a isa Integer) && (a < 0)
-                    raise_parse_error(loc, inputs, "Can't name a grid dir (+/-) with the '...' syntax")
+                # Get the axis and optional sign.
+                (axis, dir) = if a isa Int
+                    (get_axis(a), nothing)
+                elseif @capture(a, +(b_))
+                    (get_axis(b), +1)
+                elseif @capture(a, -(b_))
+                    (get_axis(b), -1)
                 else
-                    s_start_idx = get_axis(a)
+                    raise_parse_error(loc, inputs,
+                                      "Expected `a...` or `+(a)...` or `-(a)...`; got `", a, "`")
+                end
+
+                # Incorporate the symmetry tail.
+                if isnothing(s_tail)
+                    if isnothing(dir)
+                        s_tail = axis
+                    elseif dir == -1
+                        s_tail = (axis, nothing)
+                    else
+                        @bp_check(dir == 1)
+                        s_tail = (nothing, axis)
+                    end
+                elseif s_tail isa Int
+                    raise_parse_error(loc, inputs,
+                                      "Found both `", s_tail, "...` and `", expr,
+                                        "` in one symmetry statement! They overlap each other")
+                elseif (dir == -1)
+                    if exists(s_tail[1])
+                        raise_parse_error(loc, inputs,
+                                          "Found both `-(", s_tail[1], ")...` and `",
+                                            a, "` in one symmetry statement!")
+                    else
+                        s_tail = (axis, s_tail[2])
+                    end
+                elseif (dir == 1)
+                    if exists(s_tail[2])
+                        raise_parse_error(loc, inputs,
+                                          "Found both `+(", s_tail[2], ")...` and `",
+                                            a, "` in one symmetry statement!")
+                    else
+                        s_tail = (s_tail[1], axis)
+                    end
+                else
+                    error("Unhandled: ", axis, "/", dir, "/", sprint(io -> dump(io, a, maxdepth=100)))
                 end
             elseif @capture(expr, +a_)
-                if !in(a, (:x, :y, :z, :w))
-                    raise_parse_error(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
-                else
-                    push!(s_explicit, GridDir(get_axis(a), 1))
-                end
+                push!(s_explicit, GridDir(get_axis(a), 1))
             elseif @capture(expr, -a_)
-                if !in(a, (:x, :y, :z, :w))
-                    raise_parse_error(loc, inputs, "symmetry statement isn't a valid number or name: `+$a`")
-                else
-                    push!(s_explicit, GridDir(get_axis(a), -1))
-                end
-            elseif expr isa Int
-                if expr > 0
-                    push!(s_explicit, GridDir(expr, 1))
-                elseif expr < 0
-                    push!(s_explicit, GridDir(-expr, -1))
-                else
-                    raise_parse_error(loc, inputs, "symmetry axes (and all indices in Julia) are 1-based! You passed a 0")
-                end
-            elseif expr isa Symbol
+                push!(s_explicit, GridDir(get_axis(a), -1))
+            else
                 axis = get_axis(expr)
                 push!(s_explicit, GridDir(axis, -1))
                 push!(s_explicit, GridDir(axis, 1))
-            else
-                raise_parse_error(loc, inputs, "Unsupported symmetry element: `", expr, "`")
             end
         end
 
@@ -789,14 +841,32 @@ function parse_markovjunior_rewrite_rule_symmetry(inputs::MacroParserInputs, loc
             raise_parse_error(loc, inputs, "Duplicate symmetry values found: ", collect(duplicates))
         end
         #   * The lower-bound should start after the explicit list:
-        max_explicit_axis = maximum((g.axis for g in s_explicit), init=-1)
-        if exists(s_start_idx) && (max_explicit_axis >= s_start_idx)
+        tail_signs = ('-', '+')
+        max_explicit_axis = (
+            maximum((g.axis for g in s_explicit if g.sign<0), init=-1),
+            maximum((g.axis for g in s_explicit if g.sign>0), init=-1)
+        )
+        tail_axes = if isnothing(s_tail)
+            (nothing, nothing)
+        elseif s_tail isa Int
+            # The symmetry tail does not mention sign, so factor the sign out of the error-check.
+            max_explicit_axis = max(max_explicit_axis...)
+            tail_signs = tuple("")
+            s_tail
+        elseif s_tail isa NTuple{2, Optional{Int}}
+            s_tail
+        else
+            error("Unhandled: ", typeof(s_tail))
+        end
+        if any(t -> exists(t[2]) && (t[1] >= t[2]), zip(max_explicit_axis, tail_axes))
             raise_parse_error(loc, inputs,
-                           "Can't use '...' syntax at axis ", s_start_idx,
-                             " when you explicitly list other axes up to ", max_explicit_axis)
+                              "Intersection between explicit symmetry axes (which go up to ",
+                                max_explicit_axis, ") and tail symmetry axes (",
+                                iter_join((string("`", sign, t, "...`") for (sign, t) in zip(tail_signs, tail_axes) if exists(t)),
+                                          " and "))
         end
 
-        return s_explicit, s_start_idx
+        return s_explicit, s_tail
     finally
         pop!(inputs.op_stack_trace)
     end
@@ -847,7 +917,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
         else
             raise_parse_error(loc, inputs, "Expected mask to be `%x` or `%(x:y)`; got `%$maskExpr`")
         end
-        (symmetries_explicit, symmetries_infinite_start) = parse_markovjunior_rewrite_rule_symmetry(inputs, loc, symmetryExprs)
+        (symmetries_explicit, symmetries_tail) = parse_markovjunior_rewrite_rule_strip_symmetry(inputs, loc, symmetryExprs)
 
         # Parse the rule.
         lhs = parse_markovjunior_rewrite_rule_side(inputs, loc, lhsExpr, true)
@@ -896,7 +966,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
         # If the rule has only one cell, remove all symmetries to avoid redundancy.
         if length(rhs) == 1
             symmetries_explicit = [ GridDir(1, 1) ]
-            symmetries_infinite_start = nothing
+            symmetries_tail = nothing
         end
 
         return RewriteRule_Strip(
@@ -904,7 +974,7 @@ function parse_markovjunior_rewrite_rule_strip(inputs::MacroParserInputs, loc, e
             mask,
             weight,
             symmetries_explicit,
-            isnothing(symmetries_infinite_start) ? nothing : symmetries_infinite_start-1
+            symmetries_tail
         )
     finally
         pop!(inputs.op_stack_trace)
